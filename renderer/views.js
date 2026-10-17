@@ -1,7 +1,7 @@
 'use strict';
 
 const chip = (text, cls = '', icon = '') => `<span class="chip ${cls}">${icon}${text}</span>`;
-const TABS = [['overview', 'نمای کلی', I.grid], ['status', 'وضعیت زنده', I.globe], ['git', 'Git و شاخه‌ها', I.branch], ['deploy', 'استقرار', I.deploy], ['backup', 'بک‌آپ', I.db], ['ci', 'CI/CD', I.activity], ['vault', 'گاوصندوق', I.key]];
+const TABS = [['overview', 'نمای کلی', I.grid], ['tasks', 'تسک‌ها', I.tick], ['status', 'وضعیت زنده', I.globe], ['git', 'Git و شاخه‌ها', I.branch], ['deploy', 'استقرار', I.deploy], ['backup', 'بک‌آپ', I.db], ['ci', 'CI/CD', I.activity], ['vault', 'گاوصندوق', I.key]];
 const TEMPLATES = [
   { t: 'SSH + git pull + pm2', cmd: 'ssh user@host "cd /var/www/app && git pull && npm ci --omit=dev && pm2 restart app"' },
   { t: 'Docker Compose روی سرور', cmd: 'ssh user@host "cd /srv/app && docker compose pull && docker compose up -d"' },
@@ -15,10 +15,11 @@ const notSet = (msg, btn) => `<div class="empty card">${I.alert}<h3>${msg}</h3>$
 /* ---------- نوار کناری و بالا ---------- */
 function renderSidebar() {
   const A = computeAlerts(), bad = A.filter(a => a.sev === 'bad').length;
-  const nav = (name, icon, label, badge) => `<button class="nav ${V.name === name ? 'active' : ''}" data-action="go" data-to="${name}">${icon}<span class="nm">${label}</span>${badge ? `<span class="count bad">${fa(badge)}</span>` : ''}</button>`;
+  const nav = (name, icon, label, badge, plain) => `<button class="nav ${V.name === name ? 'active' : ''}" data-action="go" data-to="${name}">${icon}<span class="nm">${label}</span>${badge ? `<span class="count bad">${fa(badge)}</span>` : plain ? `<span class="count">${fa(plain)}</span>` : ''}</button>`;
   $('#sidebar').innerHTML = `
     <div class="brand"><div class="logo">${I.deploy}</div>AppWarden</div>
     ${nav('dashboard', I.grid, 'داشبورد', bad)}
+    ${nav('tasks', I.tick, 'تسک‌ها', 0, S.projects.reduce((n, p) => n + openTasks(p).length, 0))}
     ${nav('history', I.activity, 'تاریخچهٔ عملیات')}
     ${nav('vault', I.key, 'گاوصندوق رمزها')}
     ${nav('settings', I.sliders, 'تنظیمات')}
@@ -27,7 +28,7 @@ function renderSidebar() {
         <span class="sdot ${projSeverity(p.id)}"></span><span class="nm">${esc(p.name)}</span></button>`).join('') || '<div class="sub" style="padding:6px 12px;font-size:13px">هنوز برنامه‌ای اضافه نشده</div>'}`;
 }
 function renderTopbar() {
-  const names = { dashboard: 'داشبورد', history: 'تاریخچهٔ عملیات', vault: 'گاوصندوق رمزها', settings: 'تنظیمات' };
+  const names = { dashboard: 'داشبورد', tasks: 'تسک‌ها', history: 'تاریخچهٔ عملیات', vault: 'گاوصندوق رمزها', settings: 'تنظیمات' };
   const p = V.name === 'project' && proj(V.pid);
   $('#crumb').innerHTML = `<b>${esc(p ? p.name : names[V.name] || '')}</b>`;
   const n = Object.keys(RUN).length;
@@ -73,6 +74,7 @@ function pcard(p) {
     ${p.desc ? `<div class="desc">${esc(p.desc)}</div>` : ''}
     <div class="row">${gitLine}${ciChip(p)}</div>
     ${envs ? `<div class="row">${envs}</div>` : ''}
+    ${p.tasks.length ? kv('تسک‌های باز', `${fa(openTasks(p).length)}${openTasks(p).some(t => t.due && diffDays(t.due) < 0) ? ' ' + chip('عقب‌افتاده', 'late') : ''}`) : ''}
     ${kv('آخرین استقرار', dep ? `${runChip(dep)} ${ago(dep.start)}` : '<span class="sub">—</span>')}
     ${kv('آخرین بک‌آپ', bak ? `${runChip(bak)} ${ago(bak.start)}` : '<span class="sub">—</span>')}
   </div>`;
@@ -87,7 +89,7 @@ function ciBadge(r) {
 function viewProject() {
   const p = proj(V.pid);
   if (!p) { V.name = 'dashboard'; return viewDashboard(); }
-  const tabs = { overview: tabOverview, status: tabStatus, git: tabGit, deploy: tabDeploy, backup: tabBackup, ci: tabCI, vault: p => vaultSection(p.id, false) };
+  const tabs = { overview: tabOverview, tasks: tabTasks, status: tabStatus, git: tabGit, deploy: tabDeploy, backup: tabBackup, ci: tabCI, vault: p => vaultSection(p.id, false) };
   return `
     <div class="page-head"><span class="pdot" style="background:${p.color};width:14px;height:14px"></span><h1>${esc(p.name)}</h1>
       <span class="grow"></span>

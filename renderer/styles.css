@@ -227,3 +227,14 @@ pre.console { margin: 0; background: #0f121a; color: #d7dcea; padding: 12px; bor
 .dd-item.on { background: color-mix(in srgb, var(--primary) 14%, transparent); color: var(--primary); font-weight: 600; }
 .dd-item.on::after { content: "✓"; font-size: 12px; }
 .dd-item.dis { opacity: .45; cursor: default; }
+
+/* تسک‌ها */
+.quick-add { margin-bottom: 8px; }
+.quick-add input { width: 100%; border-style: dashed; background: transparent; }
+.quick-add input:focus { border-style: solid; background: var(--panel); }
+.check { width: 20px; height: 20px; border-radius: 6px; border: 2px solid var(--line); background: none; cursor: pointer; display: grid; place-items: center; padding: 0; color: #fff; flex: none; }
+.check:hover { border-color: var(--primary); }
+.check.on { background: var(--ok); border-color: var(--ok); }
+.check svg { width: 13px; height: 13px; stroke-width: 3; }
+.pdot.p0 { background: #94a3b8; } .pdot.p1 { background: var(--warn); } .pdot.p2 { background: var(--danger); }
+.trow.done .tt { text-decoration: line-through; color: var(--muted); }

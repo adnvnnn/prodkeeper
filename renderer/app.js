@@ -12,7 +12,7 @@ const RUN = {}; // اجراهای در جریان: id -> {h}
 const blank = () => ({ version: 2, projects: [], history: [], checks: {}, settings: { theme: 'system', healthMin: 5, notified: '', autoLockMin: 15 } });
 const normProject = p => ({
   desc: '', color: COLORS[0], repoPath: '', notes: '', ...p,
-  envs: p.envs || [], deploys: p.deploys || [], backups: p.backups || [],
+  envs: p.envs || [], deploys: p.deploys || [], backups: p.backups || [], tasks: p.tasks || [],
   ci: { repo: '', tokenId: '', ...(p.ci || {}) },
 });
 function normalize(d) {
@@ -131,6 +131,12 @@ function computeAlerts() {
       if (!h.ok) add(p, 'bad', `${e.name || e.url} سالم نیست (${h.error || (h.keywordOk === false ? 'متن مورد انتظار در پاسخ نبود' : 'HTTP ' + h.status)})`, 'status');
       else if (h.certDays != null && h.certDays <= 14) add(p, h.certDays <= 3 ? 'bad' : 'warn', `گواهی SSL «${e.name || e.url}» تا ${fa(Math.max(h.certDays, 0))} روز دیگر منقضی می‌شود`, 'status');
     }
+    for (const t of p.tasks) {
+      if (t.status === 'done' || !t.due) continue;
+      const d = diffDays(t.due);
+      if (d < 0) add(p, d < -7 ? 'bad' : 'warn', `تسک «${t.title}» ${fa(-d)} روز از مهلت گذشته`, 'tasks');
+      else if (d <= 3) add(p, 'warn', `تسک «${t.title}» ${d === 0 ? 'امروز' : fa(d) + ' روز دیگر'} سررسید دارد`, 'tasks');
+    }
     for (const d of p.deploys) {
       const r = lastRun(d.id, 'deploy');
       if (r && r.status === 'fail') add(p, 'bad', `آخرین استقرار «${d.name}» ناموفق بود`, 'deploy');
@@ -168,7 +174,7 @@ function render() {
   if (typeof locking !== 'undefined' && locking) return; // هنگام قفل، محتوا دوباره ساخته نشود
   renderSidebar();
   renderTopbar();
-  const views = { dashboard: viewDashboard, project: viewProject, history: viewHistory, vault: viewVault, settings: viewSettings };
+  const views = { dashboard: viewDashboard, tasks: viewTasksAll, project: viewProject, history: viewHistory, vault: viewVault, settings: viewSettings };
   $('#main').innerHTML = (views[V.name] || viewDashboard)();
   if (V.name === 'settings') fillSettings();
 }
