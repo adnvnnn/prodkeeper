@@ -1,0 +1,71 @@
+'use strict';
+
+/* ======================= کشیدن و رها کردن: مرتب‌سازی منو و کارت‌های داشبورد =======================
+ * - آیتم‌های منوی اصلی (kind=nav): ترتیب در S.settings.navOrder ذخیره می‌شود
+ * - برنامه‌ها (kind=project): ترتیب همان S.projects است و بین منوی کناری و کارت‌های داشبورد مشترک است */
+const NAV_DEFAULT = ['dashboard', 'tasks', 'history', 'vault', 'settings'];
+
+function navOrder() {
+  const saved = ((S.settings && S.settings.navOrder) || []).filter(k => NAV_DEFAULT.includes(k));
+  return [...new Set([...saved, ...NAV_DEFAULT])];
+}
+
+let dragState = null, dropMark = null;
+
+function dndClear() {
+  document.querySelectorAll('.dragging, .drop-before, .drop-after').forEach(x => x.classList.remove('dragging', 'drop-before', 'drop-after'));
+}
+
+function dndReorder(kind, id, targetId, after) {
+  const ids = kind === 'project' ? S.projects.map(p => p.id) : navOrder();
+  const from = ids.indexOf(id);
+  if (from < 0 || id === targetId) return;
+  ids.splice(from, 1);
+  const to = ids.indexOf(targetId);
+  if (to < 0) return;
+  ids.splice(after ? to + 1 : to, 0, id);
+  if (kind === 'project') S.projects = ids.map(proj);
+  else S.settings.navOrder = ids;
+  save();
+  render();
+}
+
+document.addEventListener('dragstart', e => {
+  const el = e.target.closest && e.target.closest('[data-dnd]');
+  if (!el) return;
+  dragState = { kind: el.dataset.dnd, id: el.dataset.did };
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', dragState.id);
+  setTimeout(() => el.classList.add('dragging'), 0);
+});
+
+document.addEventListener('dragover', e => {
+  if (!dragState) return;
+  const t = e.target.closest && e.target.closest(`[data-dnd="${dragState.kind}"]`);
+  document.querySelectorAll('.drop-before, .drop-after').forEach(x => x.classList.remove('drop-before', 'drop-after'));
+  dropMark = null;
+  if (!t || t.dataset.did === dragState.id) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  const r = t.getBoundingClientRect();
+  const rtl = document.documentElement.dir === 'rtl';
+  const after = t.dataset.axis === 'x'
+    ? (rtl ? e.clientX < r.left + r.width / 2 : e.clientX > r.left + r.width / 2)
+    : e.clientY > r.top + r.height / 2;
+  t.classList.add(after ? 'drop-after' : 'drop-before');
+  dropMark = { id: t.dataset.did, after };
+});
+
+document.addEventListener('drop', e => {
+  if (!dragState || !dropMark) return;
+  e.preventDefault();
+  const { kind, id } = dragState, { id: target, after } = dropMark;
+  dragState = null; dropMark = null;
+  dndReorder(kind, id, target, after);
+});
+
+document.addEventListener('dragend', () => {
+  dragState = null;
+  dropMark = null;
+  dndClear();
+});

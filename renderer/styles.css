@@ -238,3 +238,13 @@ pre.console { margin: 0; background: #0f121a; color: #d7dcea; padding: 12px; bor
 .check svg { width: 13px; height: 13px; stroke-width: 3; }
 .pdot.p0 { background: #94a3b8; } .pdot.p1 { background: var(--warn); } .pdot.p2 { background: var(--danger); }
 .trow.done .tt { text-decoration: line-through; color: var(--muted); }
+
+/* کشیدن و رها کردن (مرتب‌سازی منو و کارت‌ها) */
+[data-dnd] { user-select: none; -webkit-user-drag: element; }
+[data-dnd].dragging { opacity: .4; }
+[data-dnd][data-axis="y"].drop-before { box-shadow: inset 0 3px 0 var(--primary); }
+[data-dnd][data-axis="y"].drop-after { box-shadow: inset 0 -3px 0 var(--primary); }
+html[dir="rtl"] [data-dnd][data-axis="x"].drop-before { box-shadow: inset -4px 0 0 var(--primary); }
+html[dir="rtl"] [data-dnd][data-axis="x"].drop-after { box-shadow: inset 4px 0 0 var(--primary); }
+.nav[data-dnd], .pcard[data-dnd] { cursor: grab; }
+.nav[data-dnd]:active, .pcard[data-dnd]:active { cursor: grabbing; }

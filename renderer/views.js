@@ -15,16 +15,18 @@ const notSet = (msg, btn) => `<div class="empty card">${I.alert}<h3>${msg}</h3>$
 /* ---------- نوار کناری و بالا ---------- */
 function renderSidebar() {
   const A = computeAlerts(), bad = A.filter(a => a.sev === 'bad').length;
-  const nav = (name, icon, label, badge, plain) => `<button class="nav ${V.name === name ? 'active' : ''}" data-action="go" data-to="${name}">${icon}<span class="nm">${label}</span>${badge ? `<span class="count bad">${fa(badge)}</span>` : plain ? `<span class="count">${fa(plain)}</span>` : ''}</button>`;
+  const nav = (name, icon, label, badge, plain) => `<button class="nav ${V.name === name ? 'active' : ''}" data-action="go" data-to="${name}" draggable="true" data-dnd="nav" data-axis="y" data-did="${name}">${icon}<span class="nm">${label}</span>${badge ? `<span class="count bad">${fa(badge)}</span>` : plain ? `<span class="count">${fa(plain)}</span>` : ''}</button>`;
   $('#sidebar').innerHTML = `
     <div class="brand"><div class="logo">${I.deploy}</div>AppWarden</div>
-    ${nav('dashboard', I.grid, 'داشبورد', bad)}
-    ${nav('tasks', I.tick, 'تسک‌ها', 0, S.projects.reduce((n, p) => n + openTasks(p).length, 0))}
-    ${nav('history', I.activity, 'تاریخچهٔ عملیات')}
-    ${nav('vault', I.key, 'گاوصندوق رمزها')}
-    ${nav('settings', I.sliders, 'تنظیمات')}
+    ${navOrder().map(k => ({
+      dashboard: () => nav('dashboard', I.grid, 'داشبورد', bad),
+      tasks: () => nav('tasks', I.tick, 'تسک‌ها', 0, S.projects.reduce((n, p) => n + openTasks(p).length, 0)),
+      history: () => nav('history', I.activity, 'تاریخچهٔ عملیات'),
+      vault: () => nav('vault', I.key, 'گاوصندوق رمزها'),
+      settings: () => nav('settings', I.sliders, 'تنظیمات'),
+    }[k]())).join('')}
     <div class="side-title"><span>برنامه‌ها</span><button data-action="new-project" title="پروژهٔ جدید (Ctrl+N)">${I.plus}</button></div>
-    ${S.projects.map(p => `<button class="nav ${V.name === 'project' && V.pid === p.id ? 'active' : ''}" data-action="open-project" data-id="${p.id}">
+    ${S.projects.map(p => `<button class="nav ${V.name === 'project' && V.pid === p.id ? 'active' : ''}" data-action="open-project" data-id="${p.id}" draggable="true" data-dnd="project" data-axis="y" data-did="${p.id}">
         <span class="sdot ${projSeverity(p.id)}"></span><span class="nm">${esc(p.name)}</span></button>`).join('') || '<div class="sub" style="padding:6px 12px;font-size:13px">هنوز برنامه‌ای اضافه نشده</div>'}`;
 }
 function renderTopbar() {
@@ -69,7 +71,7 @@ function pcard(p) {
   const envs = p.envs.map(e => { const h = C.health[e.id]; return chip(esc(e.name || e.url), h ? (h.ok ? 'okc' : 'late') : '', I.globe); }).join('');
   const dep = lastOfProject(p, 'deploy'), bak = lastOfProject(p, 'backup');
   const kv = (l, v) => `<div class="kv"><span>${l}</span><span>${v}</span></div>`;
-  return `<div class="card pcard" style="--c:${p.color}" data-action="open-project" data-id="${p.id}">
+  return `<div class="card pcard" style="--c:${p.color}" data-action="open-project" data-id="${p.id}" draggable="true" data-dnd="project" data-axis="x" data-did="${p.id}">
     <div class="row between"><h3><span class="sdot ${sev}"></span> ${esc(p.name)}</h3></div>
     ${p.desc ? `<div class="desc">${esc(p.desc)}</div>` : ''}
     <div class="row">${gitLine}${ciChip(p)}</div>
