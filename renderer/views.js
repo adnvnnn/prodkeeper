@@ -15,24 +15,29 @@ const notSet = (msg, btn) => `<div class="empty card">${I.alert}<h3>${msg}</h3>$
 /* ---------- نوار کناری و بالا ---------- */
 function renderSidebar() {
   const A = computeAlerts(), bad = A.filter(a => a.sev === 'bad').length;
-  const nav = (name, icon, label, badge, plain) => `<button class="nav ${V.name === name ? 'active' : ''}" data-action="go" data-to="${name}" draggable="true" data-dnd="nav" data-axis="y" data-did="${name}">${icon}<span class="nm">${label}</span>${badge ? `<span class="count bad">${fa(badge)}</span>` : plain ? `<span class="count">${fa(plain)}</span>` : ''}</button>`;
+  const nav = (name, icon, label, badge, plain) => `<button class="nav ${V.name === name ? 'active' : ''}" data-action="go" data-to="${name}">${icon}<span class="nm">${label}</span>${badge ? `<span class="count bad">${fa(badge)}</span>` : plain ? `<span class="count">${fa(plain)}</span>` : ''}</button>`;
   $('#sidebar').innerHTML = `
     <div class="brand"><div class="logo">${I.deploy}</div>AppWarden</div>
-    ${navOrder().map(k => ({
-      dashboard: () => nav('dashboard', I.grid, 'داشبورد', bad),
-      tasks: () => nav('tasks', I.tick, 'تسک‌ها', 0, S.projects.reduce((n, p) => n + openTasks(p).length, 0)),
-      history: () => nav('history', I.activity, 'تاریخچهٔ عملیات'),
-      vault: () => nav('vault', I.key, 'گاوصندوق رمزها'),
-      settings: () => nav('settings', I.sliders, 'تنظیمات'),
-    }[k]())).join('')}
+    ${nav('dashboard', I.grid, 'داشبورد', bad)}
+    ${nav('tasks', I.tick, 'تسک‌ها', 0, S.projects.reduce((n, p) => n + openTasks(p).length, 0))}
+    ${nav('history', I.activity, 'تاریخچهٔ عملیات')}
+    ${nav('vault', I.key, 'گاوصندوق رمزها')}
+    ${nav('settings', I.sliders, 'تنظیمات')}
     <div class="side-title"><span>برنامه‌ها</span><button data-action="new-project" title="پروژهٔ جدید (Ctrl+N)">${I.plus}</button></div>
-    ${S.projects.map(p => `<button class="nav ${V.name === 'project' && V.pid === p.id ? 'active' : ''}" data-action="open-project" data-id="${p.id}" draggable="true" data-dnd="project" data-axis="y" data-did="${p.id}">
+    ${S.projects.map(p => `<button class="nav sidebar-proj ${V.name === 'project' && V.pid === p.id ? 'active' : ''}" data-action="open-project" data-id="${p.id}" draggable="true" data-dnd="project" data-axis="y" data-did="${p.id}">
         <span class="sdot ${projSeverity(p.id)}"></span><span class="nm">${esc(p.name)}</span></button>`).join('') || '<div class="sub" style="padding:6px 12px;font-size:13px">هنوز برنامه‌ای اضافه نشده</div>'}`;
 }
 function renderTopbar() {
   const names = { dashboard: 'داشبورد', tasks: 'تسک‌ها', history: 'تاریخچهٔ عملیات', vault: 'گاوصندوق رمزها', settings: 'تنظیمات' };
   const p = V.name === 'project' && proj(V.pid);
   $('#crumb').innerHTML = `<b>${esc(p ? p.name : names[V.name] || '')}</b>`;
+  // دکمه‌های بالا فقط در صفحه‌ای نمایش داده می‌شوند که کاربرد دارند
+  const show = {
+    'refresh-all': V.name === 'dashboard',   // در صفحهٔ پروژه دکمهٔ به‌روزرسانی خودش را دارد
+    'new-project': V.name === 'dashboard',   // در منوی کناری هم هست (+)
+    'lock-now': V.name !== 'settings',       // در تنظیمات دکمهٔ قفل خودش را دارد
+  };
+  Object.entries(show).forEach(([a, on]) => { const b = document.querySelector(`#topbar [data-action="${a}"]`); if (b) b.hidden = !on; });
   const n = Object.keys(RUN).length;
   $('#runBox').innerHTML = n ? `<button class="btn sm" data-action="run-open"><span class="rec"></span>${fa(n)} کار در حال اجرا</button>` : '';
 }

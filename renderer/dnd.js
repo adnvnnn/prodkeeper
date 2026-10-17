@@ -1,15 +1,8 @@
 'use strict';
 
 /* ======================= کشیدن و رها کردن: مرتب‌سازی منو و کارت‌های داشبورد =======================
- * - آیتم‌های منوی اصلی (kind=nav): ترتیب در S.settings.navOrder ذخیره می‌شود
- * - برنامه‌ها (kind=project): ترتیب همان S.projects است و بین منوی کناری و کارت‌های داشبورد مشترک است */
-const NAV_DEFAULT = ['dashboard', 'tasks', 'history', 'vault', 'settings'];
-
-function navOrder() {
-  const saved = ((S.settings && S.settings.navOrder) || []).filter(k => NAV_DEFAULT.includes(k));
-  return [...new Set([...saved, ...NAV_DEFAULT])];
-}
-
+ * فقط برنامه‌ها (kind=project) قابل جابه‌جایی‌اند؛ ترتیب همان S.projects است و بین بخش «برنامه‌ها» در منوی کناری
+ * و کارت‌های داشبورد مشترک است. آیتم‌های ثابت بالای منو جابه‌جا نمی‌شوند. */
 let dragState = null, dropMark = null;
 
 function dndClear() {
@@ -17,15 +10,14 @@ function dndClear() {
 }
 
 function dndReorder(kind, id, targetId, after) {
-  const ids = kind === 'project' ? S.projects.map(p => p.id) : navOrder();
+  const ids = S.projects.map(p => p.id);
   const from = ids.indexOf(id);
   if (from < 0 || id === targetId) return;
   ids.splice(from, 1);
   const to = ids.indexOf(targetId);
   if (to < 0) return;
   ids.splice(after ? to + 1 : to, 0, id);
-  if (kind === 'project') S.projects = ids.map(proj);
-  else S.settings.navOrder = ids;
+  S.projects = ids.map(proj);
   save();
   render();
 }
