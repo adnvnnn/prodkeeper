@@ -4,7 +4,7 @@ const $ = s => document.querySelector(s);
 const native = window.api;
 const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const fa = n => Number(n).toLocaleString('fa-IR', { useGrouping: false });
+const num = n => Number(n).toLocaleString('en-US', { useGrouping: false });
 const pad = n => String(n).padStart(2, '0');
 
 const I = {};
@@ -31,6 +31,7 @@ const I = {};
   ['lock', '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>'],
   ['ext', '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>'],
   ['term', '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>'],
+  ['bell', '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>'],
   ['alert', '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>'],
   ['tag', '<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>'],
   ['down', '<line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>'],
@@ -40,98 +41,63 @@ const I = {};
   ['cal', '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>'],
 ].forEach(([k, d]) => (I[k] = `<svg viewBox="0 0 24 24">${d}</svg>`));
 
-/* ======================= تاریخ شمسی ======================= */
-function g2j(gy, gm, gd) {
-  const gdm = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
-  const gy2 = gm > 2 ? gy + 1 : gy;
-  let days = 355666 + 365 * gy + Math.floor((gy2 + 3) / 4) - Math.floor((gy2 + 99) / 100) + Math.floor((gy2 + 399) / 400) + gd + gdm[gm - 1];
-  let jy = -1595 + 33 * Math.floor(days / 12053);
-  days %= 12053;
-  jy += 4 * Math.floor(days / 1461);
-  days %= 1461;
-  if (days > 365) { jy += Math.floor((days - 1) / 365); days = (days - 1) % 365; }
-  const jm = days < 186 ? 1 + Math.floor(days / 31) : 7 + Math.floor((days - 186) / 30);
-  const jd = 1 + (days < 186 ? days % 31 : (days - 186) % 30);
-  return [jy, jm, jd];
-}
-function j2g(jy, jm, jd) {
-  jy += 1595;
-  let days = -355668 + 365 * jy + Math.floor(jy / 33) * 8 + Math.floor(((jy % 33) + 3) / 4) + jd + (jm < 7 ? (jm - 1) * 31 : (jm - 7) * 30 + 186);
-  let gy = 400 * Math.floor(days / 146097);
-  days %= 146097;
-  if (days > 36524) { gy += 100 * Math.floor(--days / 36524); days %= 36524; if (days >= 365) days++; }
-  gy += 4 * Math.floor(days / 1461);
-  days %= 1461;
-  if (days > 365) { gy += Math.floor((days - 1) / 365); days = (days - 1) % 365; }
-  let gd = days + 1;
-  const sal = [0, 31, (gy % 4 === 0 && gy % 100 !== 0) || gy % 400 === 0 ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  let gm;
-  for (gm = 0; gm < 13 && gd > sal[gm]; gm++) gd -= sal[gm];
-  return [gy, gm, gd];
-}
-const JMONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
-function jMonthLen(jy, jm) {
-  if (jm <= 6) return 31;
-  if (jm <= 11) return 30;
-  const [gy, gm, gd] = j2g(jy, 12, 30);
-  const r = g2j(gy, gm, gd);
-  return r[0] === jy && r[1] === 12 && r[2] === 30 ? 30 : 29;
-}
+/* ======================= Dates and formatting ======================= */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const monthLen = (y, m) => new Date(y, m, 0).getDate();
 
 const toISO = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const parseISO = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d, 12); };
 const todayISO = () => toISO(new Date());
 const diffDays = iso => Math.round((parseISO(iso) - parseISO(todayISO())) / 864e5);
-const jOf = iso => { const d = parseISO(iso); return g2j(d.getFullYear(), d.getMonth() + 1, d.getDate()); };
 
 function fmtDate(iso) {
   if (!iso) return '';
-  const [jy, jm, jd] = jOf(iso);
-  return `${fa(jd)} ${JMONTHS[jm - 1]}${jy !== jOf(todayISO())[0] ? ' ' + fa(jy) : ''}`;
+  const d = parseISO(iso);
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}${d.getFullYear() !== new Date().getFullYear() ? ', ' + d.getFullYear() : ''}`;
 }
 function fmtTs(ms) {
   if (!ms) return '';
   const d = new Date(ms);
-  return `${fmtDate(toISO(d))} ${fa(pad(d.getHours()))}:${fa(pad(d.getMinutes()))}`;
+  return `${fmtDate(toISO(d))}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 function ago(ms) {
   if (!ms) return '';
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
-  if (s < 60) return 'لحظاتی پیش';
-  if (s < 3600) return `${fa(Math.floor(s / 60))} دقیقه پیش`;
-  if (s < 86400) return `${fa(Math.floor(s / 3600))} ساعت پیش`;
-  if (s < 86400 * 45) return `${fa(Math.floor(s / 86400))} روز پیش`;
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  if (s < 86400 * 45) return `${Math.floor(s / 86400)} d ago`;
   return fmtDate(toISO(new Date(ms)));
 }
 function fmtSec(s) {
   s = Math.round(s);
-  if (s < 60) return `${fa(s)} ثانیه`;
-  if (s < 3600) return `${fa(Math.floor(s / 60))} دقیقه و ${fa(s % 60)} ثانیه`;
-  return `${fa(Math.floor(s / 3600))} ساعت و ${fa(Math.floor((s % 3600) / 60))} دقیقه`;
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 function fmtSize(b) {
-  if (!b) return '۰';
-  const u = ['بایت', 'کیلوبایت', 'مگابایت', 'گیگابایت'];
+  if (!b) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB'];
   let i = 0;
   while (b >= 1024 && i < 3) { b /= 1024; i++; }
-  return `${Number(b.toFixed(i ? 1 : 0)).toLocaleString('fa-IR')} ${u[i]}`;
+  return `${Number(b.toFixed(i ? 1 : 0)).toLocaleString('en-US')} ${u[i]}`;
 }
 
-/** انتخاب‌گر تاریخ شمسی با سه لیست */
+/** Date picker with three dropdowns (day, month, year) */
 function dateField(name, iso) {
-  const [cy] = jOf(todayISO());
-  let jy = '', jm = '', jd = '';
-  if (iso) [jy, jm, jd] = jOf(iso);
-  const from = Math.min(cy - 1, jy || cy), to = Math.max(cy + 6, jy || cy);
+  const cy = new Date().getFullYear();
+  let y = '', m = '', d = '';
+  if (iso) { const x = parseISO(iso); y = x.getFullYear(); m = x.getMonth() + 1; d = x.getDate(); }
+  const from = Math.min(cy - 1, y || cy), to = Math.max(cy + 6, y || cy);
   const opts = (arr, sel) => arr.map(([v, l]) => `<option value="${v}" ${String(v) === String(sel) ? 'selected' : ''}>${l}</option>`).join('');
-  const days = Array.from({ length: 31 }, (_, i) => [i + 1, fa(i + 1)]);
-  const months = JMONTHS.map((m, i) => [i + 1, m]);
-  const years = Array.from({ length: to - from + 1 }, (_, i) => [from + i, fa(from + i)]);
+  const days = Array.from({ length: 31 }, (_, i) => [i + 1, i + 1]);
+  const months = MONTHS.map((n, i) => [i + 1, n]);
+  const years = Array.from({ length: to - from + 1 }, (_, i) => [from + i, from + i]);
   return `<div class="datef" data-name="${name}">
-    <select data-p="d"><option value="">روز</option>${opts(days, jd)}</select>
-    <select data-p="m"><option value="">ماه</option>${opts(months, jm)}</select>
-    <select data-p="y"><option value="">سال</option>${opts(years, jy)}</select>
-    <button type="button" class="btn sm" data-action="date-clear">پاک‌کردن</button></div>`;
+    <select data-p="m"><option value="">Month</option>${opts(months, m)}</select>
+    <select data-p="d"><option value="">Day</option>${opts(days, d)}</select>
+    <select data-p="y"><option value="">Year</option>${opts(years, y)}</select>
+    <button type="button" class="btn sm" data-action="date-clear">Clear</button></div>`;
 }
 function readDate(root, name) {
   const f = root.querySelector(`.datef[data-name="${name}"]`);
@@ -139,12 +105,11 @@ function readDate(root, name) {
   const y = v('y'), m = v('m');
   let d = v('d');
   if (!y || !m || !d) return '';
-  d = Math.min(d, jMonthLen(y, m));
-  const [gy, gm, gd] = j2g(y, m, d);
-  return `${gy}-${pad(gm)}-${pad(gd)}`;
+  d = Math.min(d, monthLen(y, m));
+  return `${y}-${pad(m)}-${pad(d)}`;
 }
 
-/* ======================= پنجره‌ها و اعلان ======================= */
+/* ======================= Dialogs and notifications ======================= */
 let onModalClose = null;
 function openModal(html, { small, wide } = {}) {
   const m = $('#modal');
@@ -158,11 +123,11 @@ function closeModal() {
   $('#modal').innerHTML = '';
   if (onModalClose) { const f = onModalClose; onModalClose = null; f(); }
 }
-function askConfirm(msg, okLabel = 'حذف', danger = true) {
+function askConfirm(msg, okLabel = 'Delete', danger = true) {
   return new Promise(res => {
     const c = $('#confirm');
     c.innerHTML = `<div class="dialog small"><div class="body" style="padding-top:22px;white-space:pre-line">${esc(msg)}</div>
-      <footer><button class="btn ${danger ? 'danger' : 'primary'}" id="cYes">${okLabel}</button><button class="btn" id="cNo">انصراف</button></footer></div>`;
+      <footer><button class="btn ${danger ? 'danger' : 'primary'}" id="cYes">${okLabel}</button><button class="btn" id="cNo">Cancel</button></footer></div>`;
     c.hidden = false;
     const done = v => { c.hidden = true; c.innerHTML = ''; res(v); };
     $('#cYes').onclick = () => done(true);
@@ -187,9 +152,9 @@ async function copyText(text) {
   }
 }
 
-/* ======================= لیست کشویی سفارشی =======================
- * منوی بازشدهٔ select بومی را نمی‌شود استایل داد؛ پس هر select با یک دکمه + منوی خودمان جایگزین می‌شود
- * و select اصلی (مخفی) همچنان مقدار فرم و رویداد change را نگه می‌دارد. */
+/* ======================= Custom dropdown =======================
+ * The open menu of a native select cannot be styled, so every select is replaced by a button + our own menu
+ * while the original (hidden) select keeps holding the form value and the change event. */
 let ddMenu = null, ddOwner = null;
 
 function ddLabel(sel) {
@@ -226,7 +191,7 @@ function ddOpen(sel, btn) {
   const below = innerHeight - r.bottom - 8, above = r.top - 8;
   const up = below < h && above > below;
   m.style.maxHeight = Math.min(280, up ? above : below) + 'px';
-  m.style.left = Math.max(8, Math.min(r.right - m.offsetWidth, innerWidth - m.offsetWidth - 8)) + 'px'; // هم‌راستا با لبهٔ راست دکمه (RTL)
+  m.style.left = Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8)) + 'px'; // aligned with the left edge of the button
   m.style.top = (up ? r.top - Math.min(h, above) - 4 : r.bottom + 4) + 'px';
   btn.setAttribute('aria-expanded', 'true');
   ddMenu = m;

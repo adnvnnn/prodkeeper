@@ -23,5 +23,9 @@ contextBridge.exposeInMainWorld('api', {
     onOutput: cb => ipcRenderer.on('job:output', (_e, m) => cb(m)),
   },
   net: { check: inv('net:check') },
+  app: {
+    prefs: inv('app:prefs'), setPrefs: inv('app:setPrefs'), status: inv('app:status'), notify: inv('app:notify'),
+    onNavigate: cb => ipcRenderer.on('app:navigate', (_e, n) => cb(n)),
+  },
   ci: { runs: inv('ci:runs'), workflows: inv('ci:workflows'), action: inv('ci:action') },
 });

@@ -1,22 +1,21 @@
 <!doctype html>
-<html lang="fa" dir="rtl">
+<html lang="en" dir="ltr">
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
-  <title>AppWarden — نگهبان برنامه</title>
+  <title>AppWarden</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div id="app">
-    <aside id="sidebar"></aside>
     <div id="content">
       <header id="topbar">
-        <div id="crumb"></div>
+        <nav id="nav"></nav>
         <span class="grow"></span>
         <div id="runBox"></div>
-        <button class="btn" data-action="refresh-all" title="بررسی مجدد همهٔ پروژه‌ها"></button>
-        <button class="btn" data-action="lock-now" title="قفل کردن برنامه"></button>
-        <button class="btn primary" data-action="new-project"></button>
+        <div id="fleetBox"></div>
+        <div id="bellBox" class="bellwrap"></div>
+        <button class="btn icon" data-action="lock-now" title="Lock the app"></button>
       </header>
       <main id="main"></main>
     </div>
@@ -29,6 +28,7 @@
   <script src="views.js"></script>
   <script src="app.js"></script>
   <script src="tasks.js"></script>
+  <script src="daily.js"></script>
   <script src="dnd.js"></script>
 </body>
 </html>

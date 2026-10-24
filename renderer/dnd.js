@@ -1,8 +1,9 @@
 'use strict';
 
-/* ======================= کشیدن و رها کردن: مرتب‌سازی منو و کارت‌های داشبورد =======================
- * فقط برنامه‌ها (kind=project) قابل جابه‌جایی‌اند؛ ترتیب همان S.projects است و بین بخش «برنامه‌ها» در منوی کناری
- * و کارت‌های داشبورد مشترک است. آیتم‌های ثابت بالای منو جابه‌جا نمی‌شوند. */
+/* ======================= Drag and drop: reordering the menu and dashboard cards =======================
+ * Only apps (kind=project) can be moved; the order is S.projects, shared between the "Apps" section of the side menu
+ * and the dashboard cards. The fixed items at the top of the menu do not move.
+ * When sorted by priority, dropping a card onto an app of another priority also moves it to that priority. */
 let dragState = null, dropMark = null;
 
 function dndClear() {
@@ -13,6 +14,7 @@ function dndReorder(kind, id, targetId, after) {
   const ids = S.projects.map(p => p.id);
   const from = ids.indexOf(id);
   if (from < 0 || id === targetId) return;
+  if (S.settings.projSort !== 'manual') proj(id).priority = proj(targetId).priority;
   ids.splice(from, 1);
   const to = ids.indexOf(targetId);
   if (to < 0) return;

@@ -1,6 +1,6 @@
 'use strict';
-// ساخت exe: متغیرهای پروکسی نامعتبر محیط (مثلاً بدون http://) باعث خطای "Invalid URL" در electron-builder می‌شوند؛
-// فقط همان‌هایی که معتبر نیستند برای این اجرا کنار گذاشته می‌شوند.
+// Building the exe: invalid proxy environment variables (e.g. without http://) cause an "Invalid URL" error in electron-builder;
+// only the invalid ones are set aside for this run.
 const { spawnSync } = require('child_process');
 
 for (const k of Object.keys(process.env)) {
@@ -8,7 +8,7 @@ for (const k of Object.keys(process.env)) {
   let valid = true;
   try { new URL(process.env[k]); } catch { valid = false; }
   if (!valid) {
-    console.log(`  • متغیر ${k} نامعتبر است و برای این ساخت نادیده گرفته شد`);
+    console.log(`  • variable ${k} is invalid and was ignored for this build`);
     delete process.env[k];
   }
 }
