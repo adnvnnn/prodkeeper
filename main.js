@@ -15,7 +15,7 @@ const startHidden = process.argv.includes('--hidden');
 
 /* Non-secret background preferences (needed in main; the encrypted data is not available before the master password is entered) */
 const prefsFile = () => path.join(app.getPath('userData'), 'prefs.json');
-const PREF_DEFAULTS = { keepRunning: true, autoStart: false, theme: 'dark' };
+const PREF_DEFAULTS = { keepRunning: true, autoStart: true, theme: 'dark' };
 let prefs = { ...PREF_DEFAULTS };
 function loadPrefs() { try { prefs = { ...PREF_DEFAULTS, ...JSON.parse(fs.readFileSync(prefsFile(), 'utf8')) }; } catch { /* first run */ } }
 const THEME_BG = { dark: '#0a0a0b', light: '#f6f6f7' };

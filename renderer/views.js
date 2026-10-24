@@ -268,7 +268,7 @@ function viewSettings() {
       <div class="card"><h2>${I.clock}Background and reminders</h2>
         <p class="sub">When the window is closed the app stays next to the Windows clock (tray) and monitoring and notifications continue. Global show/hide shortcut: <b>Ctrl+Alt+W</b></p>
         <label class="row" style="gap:8px;margin:6px 0"><input type="checkbox" data-pref="keepRunning" id="prefKeep"> Closing the window keeps the app running in the background</label>
-        <label class="row" style="gap:8px;margin:6px 0"><input type="checkbox" data-pref="autoStart" id="prefAuto"> Start automatically with Windows (built portable version only)</label>
+        <label class="row" style="gap:8px;margin:6px 0"><input type="checkbox" data-pref="autoStart" id="prefAuto"> Start automatically with Windows, hidden in the tray (built version only)</label>
         <label class="row" style="gap:8px;margin:6px 0"><input type="checkbox" data-setting="notifyOn" ${S.settings.notifyOn ? 'checked' : ''}> Windows notifications for critical alerts and reminders</label>
         <div class="two" style="margin-top:10px"><div class="field"><label>Remind about daily routines from</label><input type="time" data-setting="dailyAt" value="${esc(S.settings.dailyAt || '')}" style="max-width:160px"></div>
           <div class="field"><label>Repeat the reminder until done</label><select data-setting="nagMin">${opt([[0, 'Only once'], [30, 'Every 30 minutes'], [60, 'Every hour'], [120, 'Every 2 hours']], S.settings.nagMin)}</select></div></div></div>
