@@ -1,0 +1,18 @@
+node_modules/
+dist/
+dist-new/
+out/
+
+# user data must never be committed
+*.enc
+security.json
+data.json
+vault.json
+*.pkbak
+backups/
+
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db

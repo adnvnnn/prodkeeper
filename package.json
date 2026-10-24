@@ -1,0 +1,40 @@
+{
+  "name": "prodkeeper",
+  "productName": "ProdKeeper",
+  "version": "1.0.0",
+  "description": "Windows desktop control panel for maintaining deployed apps: git branches, encrypted password vault, deploys, backups, CI/CD status and live health checks.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "node scripts/dist.js"
+  },
+  "build": {
+    "appId": "dev.prodkeeper.app",
+    "productName": "ProdKeeper",
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**/*",
+      "renderer/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "portable",
+      "icon": "assets/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "portable": {
+      "artifactName": "ProdKeeper.exe"
+    },
+    "directories": {
+      "output": "dist"
+    }
+  },
+  "devDependencies": {
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3"
+  },
+  "license": "MIT",
+  "private": true
+}
