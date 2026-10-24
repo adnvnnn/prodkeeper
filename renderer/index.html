@@ -3,22 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
-  <title>AppWarden</title>
+  <title>ProdKeeper</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div id="app">
-    <aside id="side">
+    <header id="topbar">
       <nav id="nav"></nav>
-      <div class="side-label">Apps<button class="mini" data-action="new-project" title="New app (Ctrl+N)"></button></div>
-      <div id="targets"></div>
-      <div class="side-foot">
-        <div id="runBox"></div>
-        <div id="bellBox"></div>
-        <button class="sbtn" data-action="palette" title="Search and commands (Ctrl+K)"><span class="searchico"></span><span>Search</span><kbd>Ctrl K</kbd></button>
-        <button class="sbtn" data-action="lock-now" title="Lock the app"><span class="lockico"></span><span>Lock</span></button>
-      </div>
-    </aside>
+      <span class="grow"></span>
+      <div id="runBox"></div>
+      <div id="bellBox"></div>
+      <button class="tbtn" data-action="palette" title="Search and commands (Ctrl+K)"></button>
+      <button class="tbtn" data-action="lock-now" title="Lock the app"></button>
+    </header>
     <main id="main"></main>
   </div>
   <div id="modal" class="overlay" hidden></div>
@@ -30,6 +27,7 @@
   <script src="views.js"></script>
   <script src="app.js"></script>
   <script src="tasks.js"></script>
+  <script src="sprint.js"></script>
   <script src="daily.js"></script>
   <script src="dnd.js"></script>
   <script src="console.js"></script>

@@ -4,17 +4,30 @@
 const KINDS = { server: 'Server / SSH', db: 'Database', api: 'API key / token', env: 'Environment variable', web: 'Panel / website', other: 'Other' };
 
 let S = null; // persisted data: projects, history, settings
-const C = { git: {}, gd: {}, health: {}, ci: {}, wf: {}, backups: {}, vault: [] }; // transient cache
+const C = { git: {}, gd: {}, tb: {}, health: {}, ci: {}, wf: {}, backups: {}, vault: [] }; // transient cache
 const V = { name: 'dashboard', pid: null, tab: 'overview', bfilter: 'all', hKind: '', hProj: '', vProj: '', runId: null };
 const RUN = {}; // jobs in flight: id -> {h}
 
-const blank = () => ({ version: 2, projects: [], history: [], checks: {}, settings: { healthMin: 5, notified: '', autoLockMin: 15, projSort: 'priority', notifyOn: true, dailyAt: '10:00', nagMin: 60 } });
-const normProject = p => ({
+const blank = () => ({ version: 2, projects: [], history: [], checks: {}, settings: { theme: 'dark', healthMin: 5, notified: '', autoLockMin: 15, notifyOn: true, dailyAt: '10:00', nagMin: 60 } });
+const normProject = p => normTasks({
   repoPath: '', ...p, desc: undefined, notes: undefined, color: undefined,
   priority: [0, 1, 2].includes(p.priority) ? p.priority : 1,
   envs: p.envs || [], deploys: p.deploys || [], backups: p.backups || [], tasks: p.tasks || [], ops: p.ops || [],
   ci: { repo: '', tokenId: '', ...(p.ci || {}) },
+  sprints: Array.isArray(p.sprints) ? p.sprints : [],
+  taskSeq: p.taskSeq || 0,
 });
+/** Fills in the fields tasks got when backlog / sprints / estimates / git links were added, and numbers old tasks */
+function normTasks(p) {
+  let seq = Math.max(p.taskSeq || 0, ...p.tasks.map(t => t.num || 0));
+  for (const t of p.tasks) {
+    if (!['backlog', 'todo', 'doing', 'done'].includes(t.status)) t.status = 'todo';
+    if (!t.num) t.num = ++seq;
+    t.estimate = t.estimate || 0; t.sprintId = t.sprintId || ''; t.branch = t.branch || ''; t.branchAt = t.branchAt || 0;
+  }
+  p.taskSeq = seq;
+  return p;
+}
 function normalize(d) {
   const b = blank();
   if (!d || typeof d !== 'object') return b;
@@ -25,6 +38,7 @@ function normalize(d) {
     checks: d.checks && typeof d.checks === 'object' ? d.checks : {},
     settings: { ...b.settings, ...(d.settings || {}) },
   };
+  if (!['system', 'light', 'dark'].includes(out.settings.theme)) out.settings.theme = 'dark';
   return out;
 }
 
@@ -34,8 +48,8 @@ function save() { clearTimeout(saveTimer); saveTimer = setTimeout(() => { if (!N
 window.addEventListener('beforeunload', () => { if (!NOSAVE && S) native.data.saveSync(S); });
 
 const proj = id => S.projects.find(p => p.id === id);
-/** Display order of apps (dashboard and menu): by priority (stable; manual order within each priority) or purely manual */
-const orderedProjects = () => S.settings.projSort === 'manual' ? S.projects : [...S.projects].sort((a, b) => b.priority - a.priority);
+/** Display order of apps: by priority, high first (stable; drag order is kept within each priority) */
+const orderedProjects = () => [...S.projects].sort((a, b) => b.priority - a.priority);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function addHistory(h) {
@@ -87,6 +101,7 @@ async function loadVault() {
 
 async function refreshAll(manual) {
   await Promise.all(S.projects.map(p => Promise.all([loadGit(p), loadCI(p), loadHealth(p)])));
+  await refreshTaskBranches();
   softRender();
   if (manual) toast('Statuses refreshed');
 }
@@ -95,7 +110,8 @@ async function enterTab() {
   if (!p) return;
   const t = V.tab, jobs = [loadGit(p)];
   if (t === 'git') jobs.push(loadGitDetail(p));
-  if (t === 'ci' || t === 'overview') jobs.push(loadCI(p));
+  if (t === 'tasks') jobs.push(loadTaskBranches(p));
+  if (t === 'ci' || t === 'overview' || t === 'tasks') jobs.push(loadCI(p));
   if (t === 'ci') jobs.push(loadWf(p));
   if (t === 'overview' || t === 'status') jobs.push(loadHealth(p));
   if (t === 'backup') p.backups.forEach(b => jobs.push(loadBackups(b)));
@@ -131,17 +147,18 @@ function computeAlerts() {
       const last = ci.runs.find(r => r.status === 'completed' && (!def || r.branch === def)) || ci.runs.find(r => r.status === 'completed');
       if (last && last.conclusion === 'failure') add(p, 'bad', `CI failed: ${last.name} on ${last.branch}`, 'ci');
     }
+    const sp = activeSprint(p);
+    if (sp && diffDays(sp.end) < 0) add(p, 'warn', `Sprint "${iso(sp.name)}" ended ${num(-diffDays(sp.end))} days ago — close it and run the retro`, 'tasks');
+    if (wipLimit(p) && doingCount(p) > wipLimit(p)) add(p, 'warn', `${num(doingCount(p))} tasks in progress (WIP limit ${num(wipLimit(p))})`, 'tasks');
+    for (const t of p.tasks) {
+      const run = t.status === 'doing' && branchRun(p, t);
+      if (run && run.status === 'completed' && run.conclusion === 'failure') add(p, 'warn', `CI failed on ${iso(t.branch)} (${taskKey(p, t)} ${iso(t.title)})`, 'tasks');
+    }
     for (const e of p.envs) {
       const h = C.health[e.id];
       if (!h) continue;
       if (!h.ok) add(p, 'bad', `${iso(e.name || e.url)} is unhealthy (${h.error || (h.keywordOk === false ? 'expected text was not in the response' : 'HTTP ' + h.status)})`, 'status');
       else if (h.certDays != null && h.certDays <= 14) add(p, h.certDays <= 3 ? 'bad' : 'warn', `SSL certificate for "${iso(e.name || e.url)}" expires in ${num(Math.max(h.certDays, 0))} days`, 'status');
-    }
-    for (const t of p.tasks) {
-      if (t.status === 'done' || !t.due) continue;
-      const d = diffDays(t.due);
-      if (d < 0) add(p, d < -7 ? 'bad' : 'warn', `Task "${iso(t.title)}" is ${num(-d)} days overdue`, 'tasks');
-      else if (d <= 3) add(p, 'warn', `Task "${iso(t.title)}" is due ${d === 0 ? 'today' : 'in ' + num(d) + ' days'}`, 'tasks');
     }
     for (const d of p.deploys) {
       const r = lastRun(d.id, 'deploy');
@@ -188,6 +205,7 @@ function render() {
   if (V.name === 'settings') fillSettings();
 }
 function softRender() {
+  if (typeof dragState !== 'undefined' && dragState) return; // do not rebuild the page under a drag in progress
   const ae = document.activeElement;
   if (!$('#modal').hidden || (ae && $('#main').contains(ae) && /INPUT|SELECT|TEXTAREA/.test(ae.tagName))) { renderTopbar(); return; }
   const m = $('#main'), y = m.scrollTop;
@@ -417,7 +435,6 @@ const actions = {
     S.history = S.history.filter(h => h.projectId !== p.id);
     save(); closeModal(); await loadVault(); go('dashboard');
   },
-  'proj-sort': el => { S.settings.projSort = el.dataset.v; save(); render(); },
   'refresh-all': () => refreshAll(true),
   'refresh-project': async () => { await enterTab(); toast('Refreshed'); },
   'open-folder': async el => { const err = await native.shell.openFolder(el.dataset.path); if (err) toast(err, true); },
@@ -554,6 +571,7 @@ const actions = {
   'v-toggle': el => { const i = el.closest('form').querySelector('[name=secret]'); i.type = i.type === 'password' ? 'text' : 'password'; },
   'lock-now': () => lockNow(),
   'pw-change': () => pwModal(),
+  theme: el => { S.settings.theme = el.dataset.v; applyTheme(); save(); render(); },
 
   /* Settings */
   export: async () => {
@@ -622,12 +640,16 @@ document.addEventListener('keydown', e => {
 });
 
 /* ======================= Startup ======================= */
+function applyTheme() { setTheme(S.settings.theme); native.app.setPrefs({ theme: S.settings.theme }); }
+matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => setTheme(curTheme));
+
 let healthTimer = null;
 function startHealthTimer() {
   clearInterval(healthTimer);
   const m = S.settings.healthMin;
   if (m > 0) healthTimer = setInterval(async () => {
     await Promise.all(S.projects.map(p => Promise.all([loadGit(p), loadHealth(p)])));
+    await refreshTaskBranches();
     softRender();
     syncAlerts();
   }, m * 60000);
@@ -664,22 +686,20 @@ function syncAlerts(first) {
   pushNote(fresh.length > 1 ? `${num(fresh.length)} critical alerts` : 'Critical alert', fresh.length > 1 ? fresh.slice(0, 3).map(a => `${a.name}: ${a.text}`).join('\n') : `${fresh[0].name} — ${fresh[0].text}`, nav);
 }
 
-/** Reminder for daily routines and overdue tasks: from the configured time, repeating at an interval until done */
+/** Reminder for daily routines: from the configured time, repeating at an interval until done */
 let lastNag = 0;
 function reminderTick() {
   if (!S || !S.settings.notifyOn || !/^\d\d:\d\d$/.test(S.settings.dailyAt || '')) return;
   const now = new Date(), [hh, mm] = S.settings.dailyAt.split(':').map(Number);
   if (now.getHours() * 60 + now.getMinutes() < hh * 60 + mm) return;
   const todo = S.projects.flatMap(p => p.ops.filter(o => !opDoneToday(o)).map(o => ({ p, o })));
-  const overdue = S.projects.reduce((n, p) => n + p.tasks.filter(t => t.status !== 'done' && t.due && diffDays(t.due) < 0).length, 0);
-  if (!todo.length && !overdue) return;
+  if (!todo.length) return;
   const nag = Number(S.settings.nagMin) || 0, sinceLast = Date.now() - lastNag;
   if (S.settings.dailyNotified === todayISO() && (!nag || sinceLast < nag * 60000)) return;
   S.settings.dailyNotified = todayISO(); save(); lastNag = Date.now();
   const lines = [];
   if (todo.length) lines.push(`${num(todo.length)} daily routines not done today: ${todo.slice(0, 3).map(x => x.o.name).join(', ')}`);
-  if (overdue) lines.push(`${num(overdue)} overdue tasks`);
-  pushNote('AppWarden reminder', lines.join('\n'), todo.length === 1 ? { pid: todo[0].p.id, tab: 'daily' } : {});
+  pushNote('ProdKeeper reminder', lines.join('\n'), todo.length === 1 ? { pid: todo[0].p.id, tab: 'daily' } : {});
 }
 
 native.app.onNavigate(n => {
@@ -711,15 +731,14 @@ function lockScreen(st) {
     const el = $('#lock'), host = $('#lockHost'), setup = st.state === 'setup';
     el.hidden = false;
     host.innerHTML = `<form id="lockScreenForm" class="lockbox">
-      <div class="lockmark">${I.lock}</div>
+      <div class="lockmark">${LOGO}</div>
       <h2>${setup ? 'Create master password' : 'Unlock'}</h2>
       ${setup ? `<p class="sub">This password is the encryption key (AES-256) for all your data and is stored nowhere. <b>If you forget it there is no way to recover it.</b> At least 8 characters; a long passphrase is better.</p>
         ${st.legacy ? '<p class="sub" style="color:var(--ok)">Your previous data was found; it will be encrypted after you create a password and the plaintext copy will be deleted.</p>' : ''}` : '<p class="sub">Your data is encrypted; enter the master password to continue.</p>'}
       <input type="password" name="pw" placeholder="Master password" autocomplete="off">
       ${setup ? '<input type="password" name="pw2" placeholder="Repeat password" autocomplete="off">' : ''}
       <div class="err" id="lockErr">${st.waitSec ? `Too many failed attempts; wait ${num(st.waitSec)} seconds` : ''}</div>
-      <button class="btn primary" style="justify-content:center">${setup ? 'Create password and sign in' : 'Unlock'}</button>
-      ${setup ? '' : '<div class="row" style="justify-content:center"><button type="button" class="btn sm" id="lsImport">Restore from backup</button><button type="button" class="btn sm danger" id="lsReset">Forgot password…</button></div>'}</form>`;
+      <button class="btn primary" style="justify-content:center">${setup ? 'Create password and sign in' : 'Unlock'}</button></form>`;
     const f = $('#lockScreenForm');
     f.elements.pw.focus();
     const finish = () => { el.hidden = true; host.innerHTML = ''; resolve(); };
@@ -735,21 +754,6 @@ function lockScreen(st) {
       if (r.error) { err.textContent = r.error; f.elements.pw.select(); return; }
       finish();
     };
-    if (!setup) {
-      $('#lsImport').onclick = async () => {
-        const pw = await askPassword('Enter the master password of the backup file; then choose the file.');
-        if (pw === null) return;
-        const r = await native.sec.import(pw);
-        if (r.canceled) return;
-        if (r.error) { $('#lockErr').textContent = r.error; return; }
-        location.reload();
-      };
-      $('#lsReset').onclick = async () => {
-        if (!(await askConfirm('All encrypted data (projects, secrets and history) will be permanently deleted and the app will start from scratch. Continue only if you forgot the password and have no backup.', 'Erase'))) return;
-        await native.sec.reset();
-        location.reload();
-      };
-    }
   });
 }
 
@@ -763,7 +767,6 @@ async function lockNow() {
   $('#confirm').hidden = true;
   $('#main').innerHTML = '';
   $('#nav').innerHTML = '';
-  $('#targets').innerHTML = '';
   C.vault = [];
   await lockScreen(await native.sec.status());
   await loadVault();
@@ -777,16 +780,19 @@ setInterval(() => {
   if (m > 0 && !locking && Date.now() - lastActive > m * 60000) lockNow();
 }, 15000);
 
-(async function init() {
-    const st = await native.sec.status();
+// starts on load so every script (tasks, sprints, daily, ...) is defined before the first render
+async function init() {
+    try { setTheme((await native.app.prefs()).theme); } catch { /* keep the mirrored theme */ } // lock screen follows the saved choice
+  const st = await native.sec.status();
   if (st.state !== 'unlocked') await lockScreen(st);
   const ld = await native.data.load();
   if (ld && ld.error) {
     NOSAVE = true;
     S = blank();
-    await askConfirm('The data file is corrupt or has been tampered with. For now the app will not write anything to it; you can use "Restore from backup" or the daily copies in the backups folder.', 'Got it', false);
+    await askConfirm('The data file is corrupt or has been tampered with. For now the app will not write anything to it; you can use "Restore from file" in Settings or the daily copies in the backups folder.', 'Got it', false);
   } else S = normalize(ld && ld.data);
   S.history.forEach(h => { if (h.status === 'running') { h.status = 'interrupted'; h.end = h.end || h.start; } });
+  applyTheme();
   await loadVault();
   render();
   await refreshAll();
@@ -801,4 +807,5 @@ setInterval(() => {
     const c = p && C.ci[p.id];
     if (c && c.runs && c.runs.some(r => r.status !== 'completed')) loadCI(p).then(softRender);
   }, 20000);
-})();
+}
+addEventListener('load', init);

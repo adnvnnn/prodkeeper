@@ -1,20 +1,20 @@
 'use strict';
 
-/* ======================= Drag and drop: reordering the menu and dashboard cards =======================
- * Only apps (kind=project) can be moved; the order is S.projects, shared between the "Apps" section of the side menu
- * and the dashboard cards. The fixed items at the top of the menu do not move.
- * When sorted by priority, dropping a card onto an app of another priority also moves it to that priority. */
+/* ======================= Drag and drop: reordering apps on the dashboard, moving tasks on the board =======================
+ * Apps are always grouped by priority; the drag order is kept within a group, and dropping an app onto one of another
+ * priority moves it to that priority. Tasks move between board columns (or are reordered inside one); the board
+ * only accepts tasks of its own app. */
 let dragState = null, dropMark = null;
 
 function dndClear() {
-  document.querySelectorAll('.dragging, .drop-before, .drop-after').forEach(x => x.classList.remove('dragging', 'drop-before', 'drop-after'));
+  document.querySelectorAll('.dragging, .drop-before, .drop-after, .drop-col').forEach(x => x.classList.remove('dragging', 'drop-before', 'drop-after', 'drop-col'));
 }
 
 function dndReorder(kind, id, targetId, after) {
   const ids = S.projects.map(p => p.id);
   const from = ids.indexOf(id);
   if (from < 0 || id === targetId) return;
-  if (S.settings.projSort !== 'manual') proj(id).priority = proj(targetId).priority;
+  proj(id).priority = proj(targetId).priority;
   ids.splice(from, 1);
   const to = ids.indexOf(targetId);
   if (to < 0) return;
@@ -35,6 +35,7 @@ document.addEventListener('dragstart', e => {
 
 document.addEventListener('dragover', e => {
   if (!dragState) return;
+  if (dragState.kind === 'task') return taskDragOver(e);
   const t = e.target.closest && e.target.closest(`[data-dnd="${dragState.kind}"]`);
   document.querySelectorAll('.drop-before, .drop-after').forEach(x => x.classList.remove('drop-before', 'drop-after'));
   dropMark = null;
@@ -50,12 +51,34 @@ document.addEventListener('dragover', e => {
   dropMark = { id: t.dataset.did, after };
 });
 
+/** Board: hovering a card marks the gap before/after it; hovering empty column space marks the whole column */
+function taskDragOver(e) {
+  document.querySelectorAll('.drop-before, .drop-after, .drop-col').forEach(x => x.classList.remove('drop-before', 'drop-after', 'drop-col'));
+  dropMark = null;
+  const col = e.target.closest && e.target.closest('[data-col]');
+  const src = findTask(dragState.id);
+  if (!col || !src || col.dataset.pid !== src.p.id) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  const card = e.target.closest('[data-dnd="task"]');
+  if (card && card.dataset.did !== dragState.id) {
+    const r = card.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2;
+    card.classList.add(after ? 'drop-after' : 'drop-before');
+    dropMark = { col: col.dataset.col, id: card.dataset.did, after };
+  } else {
+    col.classList.add('drop-col');
+    dropMark = { col: col.dataset.col };
+  }
+}
+
 document.addEventListener('drop', e => {
   if (!dragState || !dropMark) return;
   e.preventDefault();
-  const { kind, id } = dragState, { id: target, after } = dropMark;
+  const { kind, id } = dragState, mark = dropMark;
   dragState = null; dropMark = null;
-  dndReorder(kind, id, target, after);
+  dndClear();
+  if (kind === 'task') moveTask(id, mark.col, mark.id, mark.after);
+  else dndReorder(kind, id, mark.id, mark.after);
 });
 
 document.addEventListener('dragend', () => {

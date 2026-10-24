@@ -12,19 +12,18 @@ const lastOfProject = (p, kind) => S.history.find(h => h.projectId === p.id && h
 const dur = h => (h.end ? ' · ' + fmtSec((h.end - h.start) / 1000) : '');
 const notSet = (msg, btn) => `<div class="empty card">${I.alert}<h3>${msg}</h3>${btn || ''}</div>`;
 
-/* ---------- Chrome: sidebar ---------- */
-const NAV_ITEMS = [['dashboard', 'Dashboard', I.grid], ['tasks', 'Tasks', I.tick], ['history', 'History', I.activity], ['vault', 'Vault', I.key], ['settings', 'Settings', I.sliders]];
+/* ---------- Chrome: minimal top menu ---------- */
+const NAV_ITEMS = [['dashboard', 'Dashboard'], ['tasks', 'Tasks'], ['history', 'History'], ['vault', 'Vault'], ['settings', 'Settings']];
 function renderTopbar() {
   const A = computeAlerts(), bad = A.filter(a => a.sev === 'bad').length;
-  $('#nav').innerHTML = NAV_ITEMS.map(([name, label, icon]) => `<button class="nav ${V.name === name ? 'active' : ''}" data-action="go" data-to="${name}">${icon}<span>${label}</span></button>`).join('');
-  $('#targets').innerHTML = S.projects.length ? orderedProjects().map(q =>
-    `<div class="tgt ${V.name === 'project' && V.pid === q.id ? 'active' : ''}" data-action="open-project" data-id="${q.id}" draggable="true" data-dnd="project" data-axis="y" data-did="${q.id}"><span class="sdot ${projSeverity(q.id)}"></span><span class="tn">${esc(q.name)}</span></div>`).join('')
-    : '<div class="tgt-empty">No apps yet</div>';
-  $('#bellBox').innerHTML = `<button class="sbtn ${A.length ? 'alerting' : ''}" data-action="bell">${I.bell}<span>Alerts</span>${A.length ? `<span class="badge ${bad ? 'bad' : ''}">${num(A.length)}</span>` : ''}</button>
+  const p = V.name === 'project' && proj(V.pid);
+  $('#nav').innerHTML = NAV_ITEMS.map(([name, label]) => `<button class="nav ${V.name === name ? 'active' : ''}" data-action="go" data-to="${name}">${label}</button>`).join('')
+    + (p ? `<span class="crumb"><span class="sdot ${projSeverity(p.id)}"></span>${esc(p.name)}</span>` : '');
+  $('#bellBox').innerHTML = `<button class="tbtn ${A.length ? 'alerting' : ''}" data-action="bell" title="Alerts">${I.bell}${A.length ? `<span class="badge ${bad ? 'bad' : ''}">${num(A.length)}</span>` : ''}</button>
     ${V.bell ? `<div class="bellpanel"><div class="bellhead">Alerts</div>
       <div class="bellbody">${A.length ? A.map(a => alertRow(a)).join('') : `<div class="okline">${I.tick}Nothing needs attention.</div>`}</div></div>` : ''}`;
   const n = Object.keys(RUN).length;
-  $('#runBox').innerHTML = n ? `<button class="sbtn" data-action="run-open"><span class="rec"></span><span>Running</span></button>` : '';
+  $('#runBox').innerHTML = n ? `<button class="btn sm" data-action="run-open"><span class="rec"></span>Running</button>` : '';
 }
 
 /* ---------- Dashboard ---------- */
@@ -39,17 +38,15 @@ function viewDashboard() {
       <p>Give each app its git repository, site URL, deploy command, backup and CI, and run everything from one place. Secrets stay encrypted in the vault.</p>
       <button class="btn primary" data-action="new-project">${I.plus}Add app</button></div>`;
   }
-  const manual = S.settings.projSort === 'manual', list = orderedProjects(), AL = computeAlerts();
-  const seg = (v, l) => `<button class="${(manual ? 'manual' : 'priority') === v ? 'on' : ''}" data-action="proj-sort" data-v="${v}">${l}</button>`;
-  // in priority mode, when there is more than one priority level, each group gets a heading
-  const grouped = !manual && new Set(list.map(p => p.priority)).size > 1;
+  const list = orderedProjects(), AL = computeAlerts();
+  // when there is more than one priority level, each group gets a heading
+  const grouped = new Set(list.map(p => p.priority)).size > 1;
   let body;
   if (grouped) {
     body = [2, 1, 0].filter(k => list.some(p => p.priority === k)).map(k => `<div class="group">${T_PRIO[k]} priority</div><div class="apps">${list.filter(p => p.priority === k).map(p => prow(p, AL)).join('')}</div>`).join('');
   } else body = `<div class="apps">${list.map(p => prow(p, AL)).join('')}</div>`;
   return `
     <div class="page-head"><h1>Apps</h1><span class="grow"></span>
-      <div class="seg" title="In priority mode you can drop an app onto one with a different priority">${seg('priority', 'By priority')}${seg('manual', 'Manual order')}</div>
       <button class="btn" data-action="refresh-all" title="Re-check all apps">${I.refresh}Refresh</button>
       <button class="btn primary" data-action="new-project">${I.plus}New app</button></div>
     ${dailyDashCard()}
@@ -256,10 +253,11 @@ const viewVault = () => vaultSection('', true);
 
 /* ---------- Settings ---------- */
 function viewSettings() {
-  const al = S.settings.autoLockMin;
+  const th = S.settings.theme, al = S.settings.autoLockMin;
   const opt = (arr, cur) => arr.map(([v, l]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${l}</option>`).join('');
   return `<div class="page-head"><h1>Settings</h1></div>
     <div class="set-grid">
+      <div class="card"><h2>Appearance</h2><div class="seg">${[['system', 'Match system'], ['light', 'Light'], ['dark', 'Dark']].map(([v, l]) => `<button class="${th === v ? 'on' : ''}" data-action="theme" data-v="${v}">${l}</button>`).join('')}</div></div>
       <div class="card"><h2>${I.lock.replace('<svg', '<svg style="vertical-align:-3px"')} Security and master password</h2>
         <p class="sub">All data (projects, commands, logs and secrets) is encrypted on disk with <b>AES-256-GCM</b>. The key is derived from your master password with scrypt, is stored nowhere and is wiped from memory on lock. Tampering with the files is also detected.</p>
         <div class="row"><button class="btn primary" data-action="lock-now">${I.lock}Lock now</button><button class="btn" data-action="pw-change">Change master password</button></div>

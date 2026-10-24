@@ -1,9 +1,8 @@
 'use strict';
 
-/* ======================= Command palette (Ctrl+K), hotkeys and sidebar icons ======================= */
-document.querySelector('.lockico').innerHTML = I.lock;
-document.querySelector('.searchico').innerHTML = I.search;
-document.querySelector('.side-label .mini').innerHTML = I.plus;
+/* ======================= Command palette (Ctrl+K), hotkeys and top-menu icons ======================= */
+document.querySelector('#topbar [data-action="palette"]').innerHTML = I.search;
+document.querySelector('#topbar [data-action="lock-now"]').innerHTML = I.lock;
 
 let palState = null;
 function paletteItems() {
@@ -11,6 +10,11 @@ function paletteItems() {
   NAV_ITEMS.forEach(([name, label]) => it.push({ k: 'Go to', n: label, run: () => actions.go({ dataset: { to: name } }) }));
   it.push({ k: 'Action', n: 'New app', run: () => projectModal() });
   it.push({ k: 'Action', n: 'New task', run: () => actions['task-new']({ dataset: {} }) });
+  for (const p of orderedProjects()) {
+    it.push({ k: 'Board', n: `${p.name} / Board`, run: () => { V.tview = 'board'; openProject(p.id, 'tasks'); } });
+    it.push({ k: 'Board', n: `${p.name} / Sprints and retros`, run: () => { V.tview = 'sprints'; openProject(p.id, 'tasks'); } });
+    if (!activeSprint(p)) it.push({ k: 'Action', n: `Start sprint — ${p.name}`, run: () => { V.tview = 'board'; openProject(p.id, 'tasks'); sprintStartModal(p.id); } });
+  }
   it.push({ k: 'Action', n: 'New vault item', run: () => vaultModal() });
   it.push({ k: 'Action', n: 'Refresh all apps', run: () => refreshAll(true) });
   it.push({ k: 'Action', n: 'Show alerts', run: () => { V.bell = true; renderTopbar(); } });

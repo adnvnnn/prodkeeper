@@ -8,8 +8,7 @@ out/
 security.json
 data.json
 vault.json
-*.awbak
-*.pcbak
+*.pkbak
 backups/
 
 .env
