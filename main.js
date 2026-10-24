@@ -42,7 +42,7 @@ migrateOldUserData();
 function createWindow() {
   win = new BrowserWindow({
     width: 1360, height: 840, minWidth: 1000, minHeight: 620,
-    title: 'AppWarden', backgroundColor: '#0a0d13', show: !startHidden,
+    title: 'AppWarden', backgroundColor: '#0a0a0b', show: !startHidden,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   Menu.setApplicationMenu(null);

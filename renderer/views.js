@@ -12,92 +12,68 @@ const lastOfProject = (p, kind) => S.history.find(h => h.projectId === p.id && h
 const dur = h => (h.end ? ' · ' + fmtSec((h.end - h.start) / 1000) : '');
 const notSet = (msg, btn) => `<div class="empty card">${I.alert}<h3>${msg}</h3>${btn || ''}</div>`;
 
-/* ---------- Top bar (menu and tools) ---------- */
+/* ---------- Chrome: sidebar ---------- */
+const NAV_ITEMS = [['dashboard', 'Dashboard', I.grid], ['tasks', 'Tasks', I.tick], ['history', 'History', I.activity], ['vault', 'Vault', I.key], ['settings', 'Settings', I.sliders]];
 function renderTopbar() {
   const A = computeAlerts(), bad = A.filter(a => a.sev === 'bad').length;
-  const nav = (name, icon, label, badge, plain) => `<button class="nav ${V.name === name ? 'active' : ''}" data-action="go" data-to="${name}">${icon}<span class="nm">${label}</span>${badge ? `<span class="count bad">${num(badge)}</span>` : plain ? `<span class="count">${num(plain)}</span>` : ''}</button>`;
-  const p = V.name === 'project' && proj(V.pid);
-  $('#nav').innerHTML = `
-
-    ${nav('dashboard', I.grid, 'Dashboard', bad)}
-    ${nav('tasks', I.tick, 'Tasks', 0, S.projects.reduce((n, q) => n + openTasks(q).length, 0))}
-    ${nav('history', I.activity, 'History')}
-    ${nav('vault', I.key, 'Vault')}
-    ${nav('settings', I.sliders, 'Settings')}
-    ${p ? `<span class="nav-proj"><span class="sdot ${projSeverity(p.id)}"></span>${esc(p.name)}</span>` : ''}`;
-  // top buttons are only shown on pages where they are useful
-  const show = {
-    'lock-now': V.name !== 'settings',       // the settings page has its own lock button
-  };
-  Object.entries(show).forEach(([a, on]) => { const b = document.querySelector(`#topbar [data-action="${a}"]`); if (b) b.hidden = !on; });
+  $('#nav').innerHTML = NAV_ITEMS.map(([name, label, icon]) => `<button class="nav ${V.name === name ? 'active' : ''}" data-action="go" data-to="${name}">${icon}<span>${label}</span></button>`).join('');
+  $('#targets').innerHTML = S.projects.length ? orderedProjects().map(q =>
+    `<div class="tgt ${V.name === 'project' && V.pid === q.id ? 'active' : ''}" data-action="open-project" data-id="${q.id}" draggable="true" data-dnd="project" data-axis="y" data-did="${q.id}"><span class="sdot ${projSeverity(q.id)}"></span><span class="tn">${esc(q.name)}</span></div>`).join('')
+    : '<div class="tgt-empty">No apps yet</div>';
+  $('#bellBox').innerHTML = `<button class="sbtn ${A.length ? 'alerting' : ''}" data-action="bell">${I.bell}<span>Alerts</span>${A.length ? `<span class="badge ${bad ? 'bad' : ''}">${num(A.length)}</span>` : ''}</button>
+    ${V.bell ? `<div class="bellpanel"><div class="bellhead">Alerts</div>
+      <div class="bellbody">${A.length ? A.map(a => alertRow(a)).join('') : `<div class="okline">${I.tick}Nothing needs attention.</div>`}</div></div>` : ''}`;
   const n = Object.keys(RUN).length;
-  const sevs = S.projects.map(q => projSeverity(q.id)), nBad = sevs.filter(x => x === 'bad').length, nWarn = sevs.filter(x => x === 'warn').length;
-  $('#fleetBox').innerHTML = !S.projects.length ? '' : nBad ? `<span class="fleet bad" title="Apps that need immediate attention"><span class="sdot bad"></span>${num(nBad)} ${nBad === 1 ? 'app' : 'apps'} with problems</span>`
-    : nWarn ? `<span class="fleet warn" title="Apps with warnings"><span class="sdot warn"></span>${num(nWarn)} ${nWarn === 1 ? 'app needs' : 'apps need'} attention</span>`
-    : `<span class="fleet ok" title="All apps are healthy"><span class="sdot ok"></span>All healthy</span>`;
-  $('#bellBox').innerHTML = `<button class="btn icon bellbtn" data-action="bell" title="Alerts">${I.bell}${A.length ? `<span class="bellcount ${bad ? 'bad' : 'warn'}">${num(A.length)}</span>` : ''}</button>
-    ${V.bell ? `<div class="bellpanel"><div class="bellhead">${I.bell}Alerts ${A.length ? chip(num(A.length), bad ? 'late' : 'today') : ''}</div>
-      <div class="bellbody">${A.length ? A.map(alertRow).join('') : `<div class="okline">${I.tick}Everything is fine; there are no active alerts.</div>`}</div></div>` : ''}`;
-  $('#runBox').innerHTML = n ? `<button class="btn sm" data-action="run-open"><span class="rec"></span>${num(n)} running</button>` : '';
+  $('#runBox').innerHTML = n ? `<button class="sbtn" data-action="run-open"><span class="rec"></span><span>Running</span></button>` : '';
 }
 
 /* ---------- Dashboard ---------- */
-function alertRow(a) {
+function alertRow(a, hideName) {
   const act = a.pid ? `data-action="open-project" data-id="${a.pid}" data-tab="${a.tab}"` : 'data-action="go" data-to="vault"';
-  return `<div class="alert ${a.sev}" ${act}>${I.alert}<b>${esc(a.name)}</b><span>${esc(a.text)}</span></div>`;
+  return `<div class="alert ${a.sev}" ${act}>${I.alert}${hideName ? '' : `<b>${esc(a.name)}</b>`}<span${hideName ? ' style="color:var(--text)"' : ''}>${esc(a.text)}</span></div>`;
 }
 function viewDashboard() {
   if (!S.projects.length) {
-    return `<div class="empty card" style="margin-top:20px">${I.deploy.replace('<svg', '<svg style="width:48px;height:48px"')}
-      <h3>Add your apps</h3>
-      <p>For each app define the git repository path, site URL, deploy command, backup and CI, and control everything from one place. Secrets stay encrypted in the vault.</p>
-      <button class="btn primary" data-action="new-project">${I.plus}Add your first app</button></div>`;
+    return `<div class="empty card" style="margin-top:20px">${I.deploy.replace('<svg', '<svg style="width:40px;height:40px"')}
+      <h3>Add your first app</h3>
+      <p>Give each app its git repository, site URL, deploy command, backup and CI, and run everything from one place. Secrets stay encrypted in the vault.</p>
+      <button class="btn primary" data-action="new-project">${I.plus}Add app</button></div>`;
   }
-  const manual = S.settings.projSort === 'manual', list = orderedProjects();
+  const manual = S.settings.projSort === 'manual', list = orderedProjects(), AL = computeAlerts();
   const seg = (v, l) => `<button class="${(manual ? 'manual' : 'priority') === v ? 'on' : ''}" data-action="proj-sort" data-v="${v}">${l}</button>`;
   // in priority mode, when there is more than one priority level, each group gets a heading
   const grouped = !manual && new Set(list.map(p => p.priority)).size > 1;
-  let lastPrio = -1;
-  const cards = list.map(p => {
-    const head = grouped && p.priority !== lastPrio ? `<div class="grid-title"><span class="pdot p${p.priority}"></span>${T_PRIO[p.priority]} priority<span class="sub">(${num(list.filter(x => x.priority === p.priority).length)})</span></div>` : '';
-    lastPrio = p.priority;
-    return head + pcard(p);
-  }).join('');
+  let body;
+  if (grouped) {
+    body = [2, 1, 0].filter(k => list.some(p => p.priority === k)).map(k => `<div class="group">${T_PRIO[k]} priority</div><div class="apps">${list.filter(p => p.priority === k).map(p => prow(p, AL)).join('')}</div>`).join('');
+  } else body = `<div class="apps">${list.map(p => prow(p, AL)).join('')}</div>`;
   return `
-    <div class="page-head"><span class="sub">${num(S.projects.length)} ${S.projects.length === 1 ? 'app' : 'apps'}</span><span class="grow"></span>
-      <div class="seg" title="In priority mode you can drop a card onto an app with a different priority">${seg('priority', 'By priority')}${seg('manual', 'Manual order')}</div>
-      <button class="btn" data-action="refresh-all" title="Re-check all projects">${I.refresh}Re-check</button>
-      <button class="btn primary" data-action="new-project">${I.plus}New project</button></div>
+    <div class="page-head"><h1>Apps</h1><span class="grow"></span>
+      <div class="seg" title="In priority mode you can drop an app onto one with a different priority">${seg('priority', 'By priority')}${seg('manual', 'Manual order')}</div>
+      <button class="btn" data-action="refresh-all" title="Re-check all apps">${I.refresh}Refresh</button>
+      <button class="btn primary" data-action="new-project">${I.plus}New app</button></div>
     ${dailyDashCard()}
-    <div class="grid">${cards}</div>`;
+    ${body}`;
 }
 function ciChip(p) {
   const c = C.ci[p.id];
   if (!c) return '';
   if (c.error) return chip('CI: error', 'today');
   const r = c.runs && c.runs[0];
-  return r ? `<span title="${esc(r.name)}">CI ${ciBadge(r)}</span>` : '';
+  return r ? `<span title="${esc(r.name)}">${ciBadge(r)}</span>` : '';
 }
-function pcard(p) {
-  const g = C.git[p.id], sev = projSeverity(p.id);
-  const gitLine = !p.repoPath ? '' : !g ? '<span class="sub">Checking git…</span>'
-    : g.error ? chip('git: ' + esc(g.error), 'today')
-    : `${chip(esc(g.branch), '', I.branch)}${g.dirty ? chip(`${num(g.dirty)} changed`, 'today') : ''}${g.ahead ? chip(num(g.ahead), 'soon', I.up) : ''}${g.behind ? chip(num(g.behind), 'today', I.down) : ''}`;
-  const envs = p.envs.map(e => { const h = C.health[e.id]; return chip(`<bdi>${esc(e.name || e.url)}</bdi>`, h ? (h.ok ? 'okc' : 'late') : '', I.globe); }).join('');
-  const dep = lastOfProject(p, 'deploy'), bak = lastOfProject(p, 'backup');
-  const kv = (l, v) => `<div class="kv"><span>${l}</span><span>${v}</span></div>`;
-  return `<div class="card pcard sev-${sev}" data-action="open-project" data-id="${p.id}" draggable="true" data-dnd="project" data-axis="x" data-did="${p.id}">
-    <div class="row between"><h3><span class="sdot ${sev}"></span> ${esc(p.name)}</h3>
-      <span class="prio-badge" title="App priority: ${T_PRIO[p.priority]}"><span class="pdot p${p.priority}"></span>${T_PRIO[p.priority]}</span></div>
-    <div class="row">${gitLine}${ciChip(p)}</div>
-    ${envs ? `<div class="row">${envs}</div>` : ''}
-    <div class="kvs">
-    ${p.ops.length ? kv('Daily routines', dailyCardLine(p)) : ''}
-    ${p.tasks.length ? kv('Open tasks', `${num(openTasks(p).length)}${openTasks(p).some(t => t.due && diffDays(t.due) < 0) ? ' ' + chip('Overdue', 'late') : ''}`) : ''}
-    ${kv('Last deploy', dep ? `${runChip(dep)} ${ago(dep.start)}` : '<span class="sub">—</span>')}
-    ${kv('Last backup', bak ? `${runChip(bak)} ${ago(bak.start)}` : '<span class="sub">—</span>')}
-    </div>
-  </div>`;
+const SEV_LABEL = { ok: 'Healthy', warn: 'Attention', bad: 'Critical', none: '' };
+/** One app: loud only when something is wrong, otherwise quiet */
+function prow(p, AL) {
+  const g = C.git[p.id], sev = projSeverity(p.id), mine = AL.filter(a => a.pid === p.id);
+  const line = mine.length ? esc(mine[0].text) + (mine.length > 1 ? ` <span class="sub">and ${num(mine.length - 1)} more</span>` : '')
+    : sev === 'none' ? (p.repoPath || p.envs.length ? 'Checking…' : 'Not configured') : `Operational${g && !g.error ? ' · ' + esc(g.branch) : ''}`;
+  const envs = p.envs.map(e => { const h = C.health[e.id]; return `<span class="${h && !h.ok ? 'down' : ''}"><span class="sdot ${h ? (h.ok ? 'ok' : 'bad') : ''}"></span><bdi>${esc(e.name || e.url)}</bdi></span>`; }).join('');
+  const dep = lastOfProject(p, 'deploy');
+  return `<div class="app sev-${sev}" data-action="open-project" data-id="${p.id}" draggable="true" data-dnd="project" data-axis="y" data-did="${p.id}">
+    <div><div class="an">${esc(p.name)}</div><div class="al">${line}</div></div>
+    <div class="ae">${envs}</div>
+    <div class="at">${dep ? `Deployed ${ago(dep.start)}` : ''}</div></div>`;
 }
 function ciBadge(r) {
   if (r.status !== 'completed') return chip(r.status === 'queued' ? 'Queued' : 'Running', 'soon');
@@ -112,6 +88,7 @@ function viewProject() {
   const tabs = { overview: tabOverview, daily: tabDaily, tasks: tabTasks, status: tabStatus, git: tabGit, deploy: tabDeploy, backup: tabBackup, ci: tabCI, vault: p => vaultSection(p.id, false) };
   return `
     <div class="page-head"><h1>${esc(p.name)}</h1>
+      ${SEV_LABEL[projSeverity(p.id)] ? `<span class="st ${projSeverity(p.id)}">${SEV_LABEL[projSeverity(p.id)]}</span>` : ''}
       ${chip(`<span class="pdot p${p.priority}"></span>${T_PRIO[p.priority]} priority`, '')}
       <span class="grow"></span>
       <button class="btn" data-action="refresh-project">${I.refresh}Refresh</button>
@@ -140,8 +117,7 @@ function tabOverview(p) {
     : (ci.runs.slice(0, 3).map(r => `<div class="trow" data-action="open-url" data-url="${esc(r.url)}"><span class="tt">${esc(r.name)} <span class="sub">${esc(r.branch)}</span></span>${ciBadge(r)}</div>`).join('') || '<div class="sub">No runs recorded.</div>');
   const tile = (title, icon, tab, body) => `<div class="card section"><h2>${icon}${title}<span class="grow"></span><button class="btn sm" data-action="set-tab" data-tab="${tab}">Details</button></h2>${body}</div>`;
   return `
-    ${A.length ? `<div class="card section" style="margin-bottom:16px">${A.map(alertRow).join('')}</div>` : ''}
-    ${p.envs.length ? `<div class="row" style="margin-bottom:14px">${p.envs.map(e => { const h = C.health[e.id]; return h ? `<span class="chip ${h.ok ? 'okc' : 'late'}" style="font-size:13px;padding:2px 10px">${esc(e.name)}: ${h.ok ? 'HTTP ' + num(h.status) : esc(h.error || 'HTTP ' + h.status)}</span>` : ''; }).join('')}<button class="btn sm" data-action="set-tab" data-tab="status">Live status</button></div>` : ''}
+    ${A.length ? `<div class="card section" style="margin-bottom:16px">${A.map(a => alertRow(a, true)).join('')}</div>` : ''}
     <div class="cols2">
       <div class="stack">${p.ops.length ? tile('Daily routines', I.clock, 'daily', p.ops.map(o => dailyRow(p, o)).join('')) : ''}${tile('Git', I.branch, 'git', gitTile)}${tile('Deploy', I.deploy, 'deploy', depTile)}${tile('Backup', I.db, 'backup', bakTile)}</div>
       <div class="stack"><div class="card section"><h2>${I.globe}Environments and health</h2>${envTile}</div>${tile('CI/CD', I.activity, 'ci', ciTile)}</div>
@@ -280,11 +256,10 @@ const viewVault = () => vaultSection('', true);
 
 /* ---------- Settings ---------- */
 function viewSettings() {
-  const th = S.settings.theme, al = S.settings.autoLockMin;
+  const al = S.settings.autoLockMin;
   const opt = (arr, cur) => arr.map(([v, l]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${l}</option>`).join('');
   return `<div class="page-head"><h1>Settings</h1></div>
     <div class="set-grid">
-      <div class="card"><h2>Appearance</h2><div class="seg">${[['system', 'Match system'], ['light', 'Light'], ['dark', 'Dark']].map(([v, l]) => `<button class="${th === v ? 'on' : ''}" data-action="theme" data-v="${v}">${l}</button>`).join('')}</div></div>
       <div class="card"><h2>${I.lock.replace('<svg', '<svg style="vertical-align:-3px"')} Security and master password</h2>
         <p class="sub">All data (projects, commands, logs and secrets) is encrypted on disk with <b>AES-256-GCM</b>. The key is derived from your master password with scrypt, is stored nowhere and is wiped from memory on lock. Tampering with the files is also detected.</p>
         <div class="row"><button class="btn primary" data-action="lock-now">${I.lock}Lock now</button><button class="btn" data-action="pw-change">Change master password</button></div>

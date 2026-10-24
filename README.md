@@ -5,6 +5,8 @@ One place for the things you keep jumping between: git branches, passwords, depl
 
 UI language: **English (LTR)**. Built with Electron, no framework, no build step for the UI.
 
+UI style: quiet, monochrome and exception-first — healthy apps stay calm, problems are loud. Sidebar of apps, one solid-white primary action. Shortcuts: `Ctrl+K` search / commands, `Ctrl+1…5` switch views, `Alt+1…9` switch project tabs, `Ctrl+N` new app.
+
 
 ## Features
 

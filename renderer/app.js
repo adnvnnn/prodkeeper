@@ -8,7 +8,7 @@ const C = { git: {}, gd: {}, health: {}, ci: {}, wf: {}, backups: {}, vault: [] 
 const V = { name: 'dashboard', pid: null, tab: 'overview', bfilter: 'all', hKind: '', hProj: '', vProj: '', runId: null };
 const RUN = {}; // jobs in flight: id -> {h}
 
-const blank = () => ({ version: 2, projects: [], history: [], checks: {}, settings: { theme: 'dark', healthMin: 5, notified: '', autoLockMin: 15, projSort: 'priority', notifyOn: true, dailyAt: '10:00', nagMin: 60 } });
+const blank = () => ({ version: 2, projects: [], history: [], checks: {}, settings: { healthMin: 5, notified: '', autoLockMin: 15, projSort: 'priority', notifyOn: true, dailyAt: '10:00', nagMin: 60 } });
 const normProject = p => ({
   repoPath: '', ...p, desc: undefined, notes: undefined, color: undefined,
   priority: [0, 1, 2].includes(p.priority) ? p.priority : 1,
@@ -18,13 +18,14 @@ const normProject = p => ({
 function normalize(d) {
   const b = blank();
   if (!d || typeof d !== 'object') return b;
-  return {
+  const out = {
     ...b, version: 2,
     projects: (Array.isArray(d.projects) ? d.projects : []).map(normProject),
     history: Array.isArray(d.history) ? d.history : [],
     checks: d.checks && typeof d.checks === 'object' ? d.checks : {},
     settings: { ...b.settings, ...(d.settings || {}) },
   };
+  return out;
 }
 
 let saveTimer = null;
@@ -555,7 +556,6 @@ const actions = {
   'pw-change': () => pwModal(),
 
   /* Settings */
-  theme: el => { S.settings.theme = el.dataset.v; applyTheme(); save(); render(); },
   export: async () => {
     await native.data.save(S);
     const r = await native.sec.export();
@@ -622,13 +622,6 @@ document.addEventListener('keydown', e => {
 });
 
 /* ======================= Startup ======================= */
-function applyTheme() {
-  const th = S.settings.theme;
-  const dark = th === 'dark' || (th === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
-  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-}
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => S && applyTheme());
-
 let healthTimer = null;
 function startHealthTimer() {
   clearInterval(healthTimer);
@@ -715,10 +708,10 @@ function askPassword(msg) {
 /** Screen for creating the master password (first run) or unlocking; resolves when done */
 function lockScreen(st) {
   return new Promise(resolve => {
-    const el = $('#lock'), setup = st.state === 'setup';
+    const el = $('#lock'), host = $('#lockHost'), setup = st.state === 'setup';
     el.hidden = false;
-    el.innerHTML = `<form id="lockScreenForm" class="lockbox">
-      <div class="logo big">${I.lock}</div>
+    host.innerHTML = `<form id="lockScreenForm" class="lockbox">
+      <div class="lockmark">${I.lock}</div>
       <h2>${setup ? 'Create master password' : 'Unlock'}</h2>
       ${setup ? `<p class="sub">This password is the encryption key (AES-256) for all your data and is stored nowhere. <b>If you forget it there is no way to recover it.</b> At least 8 characters; a long passphrase is better.</p>
         ${st.legacy ? '<p class="sub" style="color:var(--ok)">Your previous data was found; it will be encrypted after you create a password and the plaintext copy will be deleted.</p>' : ''}` : '<p class="sub">Your data is encrypted; enter the master password to continue.</p>'}
@@ -729,7 +722,7 @@ function lockScreen(st) {
       ${setup ? '' : '<div class="row" style="justify-content:center"><button type="button" class="btn sm" id="lsImport">Restore from backup</button><button type="button" class="btn sm danger" id="lsReset">Forgot password…</button></div>'}</form>`;
     const f = $('#lockScreenForm');
     f.elements.pw.focus();
-    const finish = () => { el.hidden = true; el.innerHTML = ''; resolve(); };
+    const finish = () => { el.hidden = true; host.innerHTML = ''; resolve(); };
     f.onsubmit = async e => {
       e.preventDefault();
       const err = $('#lockErr'), pw = f.elements.pw.value;
@@ -770,6 +763,7 @@ async function lockNow() {
   $('#confirm').hidden = true;
   $('#main').innerHTML = '';
   $('#nav').innerHTML = '';
+  $('#targets').innerHTML = '';
   C.vault = [];
   await lockScreen(await native.sec.status());
   await loadVault();
@@ -784,8 +778,7 @@ setInterval(() => {
 }, 15000);
 
 (async function init() {
-  document.querySelector('[data-action="lock-now"]').innerHTML = I.lock;
-  const st = await native.sec.status();
+    const st = await native.sec.status();
   if (st.state !== 'unlocked') await lockScreen(st);
   const ld = await native.data.load();
   if (ld && ld.error) {
@@ -794,7 +787,6 @@ setInterval(() => {
     await askConfirm('The data file is corrupt or has been tampered with. For now the app will not write anything to it; you can use "Restore from backup" or the daily copies in the backups folder.', 'Got it', false);
   } else S = normalize(ld && ld.data);
   S.history.forEach(h => { if (h.status === 'running') { h.status = 'interrupted'; h.end = h.end || h.start; } });
-  applyTheme();
   await loadVault();
   render();
   await refreshAll();

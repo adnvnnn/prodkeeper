@@ -49,7 +49,7 @@ function dailyDashCard() {
   const projects = orderedProjects().filter(p => p.ops.length);
   if (!projects.length) return '';
   const left = projects.reduce((n, p) => n + p.ops.filter(o => !opDoneToday(o)).length, 0);
-  return `<div class="card section" style="margin-bottom:18px"><h2>${I.clock}Today's routines ${chip(left ? `${num(left)} remaining` : 'All done', left ? 'today' : 'okc')}</h2>
+  return `<div class="card section" style="margin-bottom:18px"><h2>${I.clock}Today's routines ${left ? '' : chip('All done', 'okc')}</h2>
     ${projects.map(p => p.ops.map(o => dailyRow(p, o, true)).join('')).join('')}</div>`;
 }
 

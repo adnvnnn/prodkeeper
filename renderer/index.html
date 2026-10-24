@@ -8,21 +8,23 @@
 </head>
 <body>
   <div id="app">
-    <div id="content">
-      <header id="topbar">
-        <nav id="nav"></nav>
-        <span class="grow"></span>
+    <aside id="side">
+      <nav id="nav"></nav>
+      <div class="side-label">Apps<button class="mini" data-action="new-project" title="New app (Ctrl+N)"></button></div>
+      <div id="targets"></div>
+      <div class="side-foot">
         <div id="runBox"></div>
-        <div id="fleetBox"></div>
-        <div id="bellBox" class="bellwrap"></div>
-        <button class="btn icon" data-action="lock-now" title="Lock the app"></button>
-      </header>
-      <main id="main"></main>
-    </div>
+        <div id="bellBox"></div>
+        <button class="sbtn" data-action="palette" title="Search and commands (Ctrl+K)"><span class="searchico"></span><span>Search</span><kbd>Ctrl K</kbd></button>
+        <button class="sbtn" data-action="lock-now" title="Lock the app"><span class="lockico"></span><span>Lock</span></button>
+      </div>
+    </aside>
+    <main id="main"></main>
   </div>
   <div id="modal" class="overlay" hidden></div>
   <div id="confirm" class="overlay top" hidden></div>
-  <div id="lock" class="lockscreen" hidden></div>
+  <div id="palette" class="overlay pal" hidden></div>
+  <div id="lock" class="lockscreen" hidden><div id="lockHost"></div></div>
   <div id="toast"></div>
   <script src="util.js"></script>
   <script src="views.js"></script>
@@ -30,5 +32,6 @@
   <script src="tasks.js"></script>
   <script src="daily.js"></script>
   <script src="dnd.js"></script>
+  <script src="console.js"></script>
 </body>
 </html>
