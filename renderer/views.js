@@ -1,7 +1,7 @@
 'use strict';
 
 const chip = (text, cls = '', icon = '') => `<span class="chip ${cls}">${icon}${text}</span>`;
-const TABS = [['overview', 'Overview', I.grid], ['daily', 'Daily routines', I.clock], ['tasks', 'Tasks', I.tick], ['status', 'Live status', I.globe], ['git', 'Git & branches', I.branch], ['deploy', 'Deploy', I.deploy], ['backup', 'Backup', I.db], ['ci', 'CI/CD', I.activity], ['vault', 'Vault', I.key]];
+const TABS = [['tasks', 'Tasks', I.tick], ['overview', 'Overview', I.grid], ['daily', 'Daily routines', I.clock], ['status', 'Live status', I.globe], ['git', 'Git & branches', I.branch], ['deploy', 'Deploy', I.deploy], ['backup', 'Backup', I.db], ['ci', 'CI/CD', I.activity], ['vault', 'Vault', I.key]];
 const TEMPLATES = [
   { t: 'SSH + git pull + pm2', cmd: 'ssh user@host "cd /var/www/app && git pull && npm ci --omit=dev && pm2 restart app"' },
   { t: 'Docker Compose on a server', cmd: 'ssh user@host "cd /srv/app && docker compose pull && docker compose up -d"' },

@@ -5,7 +5,7 @@ const KINDS = { server: 'Server / SSH', db: 'Database', api: 'API key / token', 
 
 let S = null; // persisted data: projects, history, settings
 const C = { git: {}, gd: {}, tb: {}, health: {}, ci: {}, wf: {}, backups: {}, vault: [] }; // transient cache
-const V = { name: 'dashboard', pid: null, tab: 'overview', bfilter: 'all', hKind: '', hProj: '', vProj: '', runId: null };
+const V = { name: 'dashboard', pid: null, tab: 'tasks', bfilter: 'all', hKind: '', hProj: '', vProj: '', runId: null };
 const RUN = {}; // jobs in flight: id -> {h}
 
 const blank = () => ({ version: 2, projects: [], history: [], checks: {}, settings: { theme: 'dark', healthMin: 5, notified: '', autoLockMin: 15, notifyOn: true, dailyAt: '10:00', nagMin: 60 } });
@@ -118,7 +118,7 @@ async function enterTab() {
   await Promise.all(jobs);
   softRender();
 }
-function openProject(pid, tab = 'overview') {
+function openProject(pid, tab = 'tasks') {
   go('project', { pid, tab });
   enterTab();
 }
@@ -422,7 +422,7 @@ async function saveVault(form) {
 const actions = {
   close: closeModal,
   go: el => { go(el.dataset.to); if (el.dataset.to === 'vault') loadVault().then(softRender); },
-  'open-project': el => openProject(el.dataset.id, el.dataset.tab || 'overview'),
+  'open-project': el => openProject(el.dataset.id, el.dataset.tab || 'tasks'),
   'set-tab': el => { V.tab = el.dataset.tab; render(); enterTab(); },
   'new-project': () => projectModal(),
   'edit-project': el => projectModal(el.dataset.id),
@@ -705,7 +705,7 @@ function reminderTick() {
 native.app.onNavigate(n => {
   if (!n) return;
   if (n.lock) { lockNow(); return; }
-  if (n.pid && proj(n.pid)) openProject(n.pid, n.tab || 'overview'); else go('dashboard');
+  if (n.pid && proj(n.pid)) openProject(n.pid, n.tab || 'tasks'); else go('dashboard');
 });
 
 /* ======================= Lock and master password ======================= */
