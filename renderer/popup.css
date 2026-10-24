@@ -1,0 +1,15 @@
+/* Task popup: a small always-on-top window that follows the app theme */
+body.pop { display: flex; flex-direction: column; height: 100vh; border: 1px solid var(--line2); overflow: hidden; }
+.pop header { display: flex; align-items: center; gap: 4px; padding: 10px 12px 8px 16px; flex: none; -webkit-app-region: drag; }
+.pop header button { -webkit-app-region: no-drag; }
+.ph-t { font-weight: 650; font-size: 14px; }
+.pop main { flex: 1; overflow: auto; padding: 0 8px 12px; }
+.pop .grp { margin: 12px 8px 4px; color: var(--faint); font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; display: flex; justify-content: space-between; }
+.pop .item { display: flex; align-items: flex-start; gap: 9px; padding: 8px; border-radius: var(--radius-sm); cursor: pointer; }
+.pop .item:hover { background: var(--panel2); }
+.pop .item .check { margin-top: 2px; }
+.pop .item .pdot { margin-top: 7px; }
+.pop .item .it { flex: 1; min-width: 0; }
+.pop .item .tt { overflow-wrap: anywhere; }
+.pop .item .sub { font-size: 11.5px; display: flex; gap: 8px; }
+.pop .none { padding: 36px 20px; text-align: center; color: var(--muted); }

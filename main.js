@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, session, Tray, Notification, nativeImage, globalShortcut, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, session, Tray, Notification, nativeImage, globalShortcut, nativeTheme, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const gitlib = require('./lib/git');
@@ -10,7 +10,7 @@ const net = require('./lib/net');
 if (!app.requestSingleInstanceLock()) app.quit();
 app.setAppUserModelId('dev.prodkeeper.app');
 
-let win, tray, quitting = false;
+let win, tray, popupWin, popupSnap = { locked: true }, quitting = false;
 const startHidden = process.argv.includes('--hidden');
 
 /* Non-secret background preferences (needed in main; the encrypted data is not available before the master password is entered) */
@@ -43,6 +43,7 @@ function createWindow() {
   win.webContents.on('will-navigate', e => e.preventDefault());
   // a hidden renderer must still run the monitoring timers without throttling
   win.webContents.setBackgroundThrottling(false);
+  win.on('closed', () => { if (popupWin && !popupWin.isDestroyed()) popupWin.destroy(); });
   win.on('close', e => {
     if (quitting || !prefs.keepRunning) return;
     e.preventDefault();
@@ -61,6 +62,42 @@ function showWin(nav) {
   win.show(); win.focus();
   if (nav) win.webContents.send('app:navigate', nav);
 }
+/* Task popup: a small always-on-top window above the tray icon. It only shows a snapshot that the main window pushes
+ * (nothing is read from the encrypted data here, and the snapshot becomes "locked" when the app locks). */
+const POPUP_W = 360, POPUP_H = 480;
+function createPopup() {
+  popupWin = new BrowserWindow({
+    width: POPUP_W, height: POPUP_H, show: false, frame: false, resizable: false, maximizable: false, minimizable: false,
+    skipTaskbar: true, alwaysOnTop: true, fullscreenable: false, title: 'ProdKeeper tasks',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? THEME_BG.dark : THEME_BG.light,
+    webPreferences: { preload: path.join(__dirname, 'popup-preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  popupWin.setAlwaysOnTop(true, 'pop-up-menu');
+  popupWin.loadFile(path.join(__dirname, 'renderer', 'popup.html'));
+  popupWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  popupWin.webContents.on('will-navigate', e => e.preventDefault());
+  popupWin.on('blur', () => { if (popupWin && !popupWin.isDestroyed() && !popupWin.webContents.isDevToolsOpened()) popupWin.hide(); });
+  popupWin.on('close', e => { if (!quitting) { e.preventDefault(); popupWin.hide(); } });
+}
+function placePopup() {
+  const tb = tray && tray.getBounds();
+  const disp = tb && tb.width ? screen.getDisplayNearestPoint({ x: tb.x, y: tb.y }) : screen.getPrimaryDisplay();
+  const wa = disp.workArea;
+  let x = wa.x + wa.width - POPUP_W - 12, y = wa.y + wa.height - POPUP_H - 12;
+  if (tb && tb.width) {
+    x = Math.min(Math.max(tb.x + tb.width / 2 - POPUP_W / 2, wa.x + 12), wa.x + wa.width - POPUP_W - 12);
+    y = tb.y > wa.y + wa.height / 2 ? tb.y - POPUP_H - 8 : tb.y + tb.height + 8;
+    y = Math.min(Math.max(y, wa.y + 12), wa.y + wa.height - POPUP_H - 12);
+  }
+  popupWin.setPosition(Math.round(x), Math.round(y));
+}
+function togglePopup() {
+  if (!popupWin || popupWin.isDestroyed()) createPopup();
+  if (popupWin.isVisible()) { popupWin.hide(); return; }
+  placePopup();
+  popupWin.webContents.send('popup:data', popupSnap);
+  popupWin.show(); popupWin.focus();
+}
 function toggleWin() { if (win && win.isVisible() && win.isFocused()) win.hide(); else showWin(); }
 
 /* Tray icon: the logo; a small amber / red dot is added for warnings / critical alerts */
@@ -77,6 +114,7 @@ function createTray() {
   tray.on('click', toggleWin);
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open ProdKeeper', click: () => showWin() },
+    { label: 'Tasks popup\tCtrl+Alt+T', click: togglePopup },
     { label: 'Lock', click: () => showWin({ lock: true }) },
     { type: 'separator' },
     { label: 'Quit', click: () => { quitting = true; app.quit(); } },
@@ -174,9 +212,35 @@ app.whenReady().then(() => {
     return true;
   });
 
+  // the popup talks only to main: snapshots come from the main window, actions come from the popup window
+  const fromWin = e => win && !win.isDestroyed() && e.sender === win.webContents;
+  const fromPopup = e => popupWin && !popupWin.isDestroyed() && e.sender === popupWin.webContents;
+  ipcMain.handle('popup:update', (e, snap) => {
+    if (!fromWin(e) || !snap || typeof snap !== 'object') return false;
+    const theme = snap.theme === 'light' ? 'light' : 'dark';
+    popupSnap = snap.locked ? { locked: true, theme } : {
+      locked: false, theme,
+      items: (Array.isArray(snap.items) ? snap.items : []).slice(0, 200).map(t => ({
+        id: String(t.id), pid: String(t.pid), key: String(t.key).slice(0, 16), app: String(t.app).slice(0, 60), title: String(t.title).slice(0, 300),
+        status: t.status === 'doing' ? 'doing' : 'todo', priority: [0, 1, 2].includes(t.priority) ? t.priority : 1, estimate: Number(t.estimate) || 0,
+      })),
+    };
+    if (popupWin && !popupWin.isDestroyed() && popupWin.isVisible()) popupWin.webContents.send('popup:data', popupSnap);
+    return true;
+  });
+  ipcMain.handle('popup:ready', e => (fromPopup(e) ? popupSnap : null));
+  ipcMain.handle('popup:toggle', e => { if (fromWin(e)) togglePopup(); });
+  ipcMain.on('popup:act', (e, a) => {
+    if (!fromPopup(e) || !a) return;
+    if (a.type === 'close') popupWin.hide();
+    else if (a.type === 'done' && typeof a.id === 'string') win.webContents.send('popup:action', { type: 'done', id: a.id });
+    else if (a.type === 'open') { popupWin.hide(); showWin(typeof a.pid === 'string' && a.pid ? { pid: a.pid, tab: 'tasks' } : undefined); }
+  });
+
   createWindow();
   createTray();
   try { globalShortcut.register('CommandOrControl+Alt+W', toggleWin); } catch { /* shortcut is taken by another app */ }
+  try { globalShortcut.register('CommandOrControl+Alt+T', togglePopup); } catch { /* shortcut is taken by another app */ }
 });
 
 app.on('window-all-closed', () => { if (!prefs.keepRunning || quitting) app.quit(); });

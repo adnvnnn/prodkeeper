@@ -44,7 +44,7 @@ function normalize(d) {
 
 let saveTimer = null;
 let NOSAVE = false; // if the data file was corrupt we do not write over it
-function save() { clearTimeout(saveTimer); saveTimer = setTimeout(() => { if (!NOSAVE) native.data.save(S); }, 200); }
+function save() { clearTimeout(saveTimer); saveTimer = setTimeout(() => { if (!NOSAVE) native.data.save(S); pushPopup(); }, 200); }
 window.addEventListener('beforeunload', () => { if (!NOSAVE && S) native.data.saveSync(S); });
 
 const proj = id => S.projects.find(p => p.id === id);
@@ -763,6 +763,7 @@ async function lockNow() {
   locking = true;
   if (!NOSAVE) await native.data.save(S);
   await native.sec.lock();
+  pushPopup(true);
   closeModal();
   $('#confirm').hidden = true;
   $('#main').innerHTML = '';
@@ -772,6 +773,7 @@ async function lockNow() {
   await loadVault();
   if (!NOSAVE) await native.data.save(S);
   render();
+  pushPopup();
   lastActive = Date.now();
   locking = false;
 }
@@ -795,6 +797,7 @@ async function init() {
   applyTheme();
   await loadVault();
   render();
+  pushPopup();
   await refreshAll();
   startHealthTimer();
   syncAlerts(true);

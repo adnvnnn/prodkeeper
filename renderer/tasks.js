@@ -296,3 +296,25 @@ document.addEventListener('change', e => {
   p.wip = Number(e.target.value) || 0;
   save(); render();
 });
+
+/* ---------- Tasks popup (small always-on-top window, Ctrl+Alt+T) ---------- */
+/** Sends what the popup shows: only tasks that are in play, never anything else from the data */
+function pushPopup(locked) {
+  if (!S || !native.popup) return;
+  const theme = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+  const items = [];
+  if (!locked) {
+    for (const p of orderedProjects()) {
+      for (const t of p.tasks) {
+        if (isNow(t)) items.push({ id: t.id, pid: p.id, key: taskKey(p, t), app: p.name, title: t.title, status: t.status, priority: t.priority, estimate: t.estimate || 0 });
+      }
+    }
+    items.sort((a, b) => b.priority - a.priority);
+  }
+  try { native.popup.update(locked ? { locked: true, theme } : { locked: false, theme, items }); } catch { /* popup unavailable */ }
+}
+if (native.popup) {
+  native.popup.onAction(a => {
+    if (a && a.type === 'done' && typeof a.id === 'string' && !(typeof locking !== 'undefined' && locking) && findTask(a.id)) moveTask(a.id, 'done');
+  });
+}
