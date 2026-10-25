@@ -4,6 +4,7 @@
 const body = document.getElementById('pBody');
 const ICON = {
   ext: '<svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
+  lock: '<svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
   x: '<svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
 };
 document.getElementById('pOpen').innerHTML = ICON.ext;
@@ -16,9 +17,16 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 const GROUPS = [['doing', 'In progress'], ['todo', 'To do']];
 
 function draw(d) {
-  document.documentElement.dataset.theme = d && d.theme === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = d && d.theme ? (d.theme === 'light' ? 'light' : 'dark') : (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
   body.replaceChildren();
-  if (!d || d.locked) { body.append(el('div', 'none', 'ProdKeeper is locked. Unlock it to see your tasks.')); return; }
+  if (!d || d.locked) {
+    const box = el('div', 'locked');
+    const mark = el('div', 'lockmark');
+    mark.innerHTML = ICON.lock;
+    box.append(mark, el('div', 'lt', 'Locked'), el('div', 'none', 'Unlock ProdKeeper to see your tasks.'));
+    body.append(box);
+    return;
+  }
   let any = false;
   for (const [status, label] of GROUPS) {
     const list = d.items.filter(t => t.status === status);

@@ -10,7 +10,7 @@ const net = require('./lib/net');
 if (!app.requestSingleInstanceLock()) app.quit();
 app.setAppUserModelId('dev.prodkeeper.app');
 
-let win, tray, popupWin, popupSnap = { locked: true }, quitting = false;
+let win, tray, popupWin, popupSnap = { locked: true }, popupPlaced = false, quitting = false;
 const startHidden = process.argv.includes('--hidden');
 
 /* Non-secret background preferences (needed in main; the encrypted data is not available before the master password is entered) */
@@ -23,8 +23,16 @@ const THEME_BG = { dark: '#0a0a0b', light: '#f6f6f7' };
 function applyNativeTheme() {
   if (!['system', 'light', 'dark'].includes(prefs.theme)) prefs.theme = 'dark';
   nativeTheme.themeSource = prefs.theme;
-  if (win && !win.isDestroyed()) win.setBackgroundColor(nativeTheme.shouldUseDarkColors ? THEME_BG.dark : THEME_BG.light);
+  const bg = nativeTheme.shouldUseDarkColors ? THEME_BG.dark : THEME_BG.light;
+  if (win && !win.isDestroyed()) win.setBackgroundColor(bg);
+  if (popupWin && !popupWin.isDestroyed()) {
+    popupWin.setBackgroundColor(bg);
+    popupSnap = { ...popupSnap, theme: popupTheme() };
+    popupWin.webContents.send('popup:data', popupSnap);
+  }
 }
+/** The popup follows the app theme; while locked it still has to match, so main resolves it itself */
+function popupTheme() { return nativeTheme.shouldUseDarkColors ? 'dark' : 'light'; }
 function savePrefs() { try { fs.writeFileSync(prefsFile(), JSON.stringify(prefs), 'utf8'); } catch { /* read-only */ } }
 function applyAutoStart() {
   if (!app.isPackaged) return; // in development we do not register electron.exe as a startup item
@@ -68,7 +76,7 @@ function showWin(nav) {
 const POPUP_W = 360, POPUP_H = 480;
 function createPopup() {
   popupWin = new BrowserWindow({
-    width: POPUP_W, height: POPUP_H, show: false, frame: false, resizable: false, maximizable: false, minimizable: false,
+    width: POPUP_W, height: POPUP_H, minWidth: 280, minHeight: 180, show: false, frame: false, resizable: true, maximizable: false, minimizable: false,
     skipTaskbar: true, alwaysOnTop: true, fullscreenable: false, title: 'ProdKeeper tasks',
     backgroundColor: nativeTheme.shouldUseDarkColors ? THEME_BG.dark : THEME_BG.light,
     webPreferences: { preload: path.join(__dirname, 'popup-preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
@@ -80,21 +88,23 @@ function createPopup() {
   popupWin.on('close', e => { if (!quitting) { e.preventDefault(); popupWin.hide(); } });
 }
 function placePopup() {
+  const [pw, ph] = popupWin.getSize();
   const tb = tray && tray.getBounds();
   const disp = tb && tb.width ? screen.getDisplayNearestPoint({ x: tb.x, y: tb.y }) : screen.getPrimaryDisplay();
   const wa = disp.workArea;
-  let x = wa.x + wa.width - POPUP_W - 12, y = wa.y + wa.height - POPUP_H - 12;
+  let x = wa.x + wa.width - pw - 12, y = wa.y + wa.height - ph - 12;
   if (tb && tb.width) {
-    x = Math.min(Math.max(tb.x + tb.width / 2 - POPUP_W / 2, wa.x + 12), wa.x + wa.width - POPUP_W - 12);
-    y = tb.y > wa.y + wa.height / 2 ? tb.y - POPUP_H - 8 : tb.y + tb.height + 8;
-    y = Math.min(Math.max(y, wa.y + 12), wa.y + wa.height - POPUP_H - 12);
+    x = Math.min(Math.max(tb.x + tb.width / 2 - pw / 2, wa.x + 12), wa.x + wa.width - pw - 12);
+    y = tb.y > wa.y + wa.height / 2 ? tb.y - ph - 8 : tb.y + tb.height + 8;
+    y = Math.min(Math.max(y, wa.y + 12), wa.y + wa.height - ph - 12);
   }
   popupWin.setPosition(Math.round(x), Math.round(y));
 }
 function togglePopup() {
   if (!popupWin || popupWin.isDestroyed()) createPopup();
   if (popupWin.isVisible()) { popupWin.hide(); return; }
-  placePopup();
+  if (!popupPlaced) { placePopup(); popupPlaced = true; } // afterwards it reopens where (and as big as) the user left it
+  if (popupSnap.locked) popupSnap = { locked: true, theme: popupTheme() };
   popupWin.webContents.send('popup:data', popupSnap);
   popupWin.setAlwaysOnTop(true, 'pop-up-menu');
   popupWin.show(); popupWin.focus();
@@ -218,7 +228,7 @@ app.whenReady().then(() => {
   const fromPopup = e => popupWin && !popupWin.isDestroyed() && e.sender === popupWin.webContents;
   ipcMain.handle('popup:update', (e, snap) => {
     if (!fromWin(e) || !snap || typeof snap !== 'object') return false;
-    const theme = snap.theme === 'light' ? 'light' : 'dark';
+    const theme = snap.locked ? popupTheme() : (snap.theme === 'light' ? 'light' : 'dark');
     popupSnap = snap.locked ? { locked: true, theme } : {
       locked: false, theme,
       items: (Array.isArray(snap.items) ? snap.items : []).slice(0, 200).map(t => ({
@@ -229,7 +239,7 @@ app.whenReady().then(() => {
     if (popupWin && !popupWin.isDestroyed() && popupWin.isVisible()) popupWin.webContents.send('popup:data', popupSnap);
     return true;
   });
-  ipcMain.handle('popup:ready', e => (fromPopup(e) ? popupSnap : null));
+  ipcMain.handle('popup:ready', e => (fromPopup(e) ? { ...popupSnap, theme: popupSnap.locked ? popupTheme() : popupSnap.theme } : null));
   ipcMain.handle('popup:toggle', e => { if (fromWin(e)) togglePopup(); });
   ipcMain.on('popup:act', (e, a) => {
     if (!fromPopup(e) || !a) return;

@@ -13,3 +13,8 @@ body.pop { display: flex; flex-direction: column; height: 100vh; border: 1px sol
 .pop .item .tt { overflow-wrap: anywhere; }
 .pop .item .sub { font-size: 11.5px; display: flex; gap: 8px; }
 .pop .none { padding: 36px 20px; text-align: center; color: var(--muted); }
+.pop .locked { height: 100%; display: grid; align-content: center; justify-items: center; gap: 10px; padding: 0 24px 24px; text-align: center; }
+.pop .locked .lockmark { width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid var(--line2); border-radius: 10px; color: var(--muted); }
+.pop .locked .lockmark svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.pop .locked .lt { font-weight: 650; font-size: 15px; }
+.pop .locked .none { padding: 0; }
