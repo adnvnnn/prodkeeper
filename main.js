@@ -62,7 +62,8 @@ function showWin(nav) {
   win.show(); win.focus();
   if (nav) win.webContents.send('app:navigate', nav);
 }
-/* Task popup: a small always-on-top window above the tray icon. It only shows a snapshot that the main window pushes
+/* Task popup: a small always-on-top window above the tray icon. It stays put (no hide on blur) until it is closed with
+ * Esc / the close button / the shortcut again, and can be dragged by its header. It only shows a snapshot that the main window pushes
  * (nothing is read from the encrypted data here, and the snapshot becomes "locked" when the app locks). */
 const POPUP_W = 360, POPUP_H = 480;
 function createPopup() {
@@ -76,7 +77,6 @@ function createPopup() {
   popupWin.loadFile(path.join(__dirname, 'renderer', 'popup.html'));
   popupWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   popupWin.webContents.on('will-navigate', e => e.preventDefault());
-  popupWin.on('blur', () => { if (popupWin && !popupWin.isDestroyed() && !popupWin.webContents.isDevToolsOpened()) popupWin.hide(); });
   popupWin.on('close', e => { if (!quitting) { e.preventDefault(); popupWin.hide(); } });
 }
 function placePopup() {
@@ -96,6 +96,7 @@ function togglePopup() {
   if (popupWin.isVisible()) { popupWin.hide(); return; }
   placePopup();
   popupWin.webContents.send('popup:data', popupSnap);
+  popupWin.setAlwaysOnTop(true, 'pop-up-menu');
   popupWin.show(); popupWin.focus();
 }
 function toggleWin() { if (win && win.isVisible() && win.isFocused()) win.hide(); else showWin(); }
@@ -234,7 +235,7 @@ app.whenReady().then(() => {
     if (!fromPopup(e) || !a) return;
     if (a.type === 'close') popupWin.hide();
     else if (a.type === 'done' && typeof a.id === 'string') win.webContents.send('popup:action', { type: 'done', id: a.id });
-    else if (a.type === 'open') { popupWin.hide(); showWin(typeof a.pid === 'string' && a.pid ? { pid: a.pid, tab: 'tasks' } : undefined); }
+    else if (a.type === 'open') { showWin(typeof a.pid === 'string' && a.pid ? { pid: a.pid, tab: 'tasks' } : undefined); }
   });
 
   createWindow();

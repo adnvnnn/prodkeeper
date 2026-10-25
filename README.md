@@ -12,7 +12,7 @@ Built with Electron and vanilla JS (no UI framework, no build step).
 - **Backups** – zip a folder or run any command, with retention and optional schedule.
 - **CI/CD** – GitHub Actions runs: view, re-run, cancel, dispatch.
 - **Agile board** – per-app kanban (Backlog → To do → In progress → Done) with drag and drop, WIP limit, story-point estimates, optional sprints with a closing retrospective, and tasks linked to git branches (a task closes itself when its branch is merged).
-- **Tasks popup** – a small always-on-top window (Ctrl+Alt+T, or the tray menu) listing what is in progress and to do; tick a task to finish it, click it to open the app. It shows nothing while the app is locked.
+- **Tasks popup** – a small always-on-top window that stays pinned above other windows until you close it (Ctrl+Alt+T toggles it, also in the tray menu; drag the header to move it) listing what is in progress and to do; tick a task to finish it, click it to open the app. It shows nothing while the app is locked.
 - **Vault** – AES-256-GCM encrypted secrets, injectable into commands as `NAME=@label` and masked in logs.
 - **Tray & alerts** – one alert list across all apps, Windows notifications, daily-task reminders.
 
