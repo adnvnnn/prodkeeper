@@ -8,7 +8,7 @@ let palState = null;
 function paletteItems() {
   const it = [];
   NAV_ITEMS.forEach(([name, label]) => it.push({ k: 'Go to', n: label, run: () => actions.go({ dataset: { to: name } }) }));
-  it.push({ k: 'Action', n: 'New app', run: () => projectModal() });
+  it.push({ k: 'Action', n: 'New project', run: () => projectModal() });
   it.push({ k: 'Action', n: 'New task', run: () => actions['task-new']({ dataset: {} }) });
   for (const p of orderedProjects()) {
     it.push({ k: 'Board', n: `${p.name} / Board`, run: () => { V.tview = 'board'; openProject(p.id, 'tasks'); } });
@@ -18,10 +18,10 @@ function paletteItems() {
   it.push({ k: 'Action', n: 'Tasks popup (Ctrl+Alt+T)', run: () => native.popup && native.popup.toggle() });
   it.push(...petPaletteItems());
   it.push({ k: 'Action', n: 'New vault item', run: () => vaultModal() });
-  it.push({ k: 'Action', n: 'Refresh all apps', run: () => refreshAll(true) });
+  it.push({ k: 'Action', n: 'Refresh all projects', run: () => refreshAll(true) });
   it.push({ k: 'Action', n: 'Show alerts', run: () => { V.bell = true; renderTopbar(); } });
   it.push({ k: 'Action', n: 'Lock', run: () => lockNow() });
-  for (const p of orderedProjects()) TABS.forEach(([t, l]) => it.push({ k: 'App', n: `${p.name} / ${l}`, run: () => openProject(p.id, t) }));
+  for (const p of orderedProjects()) TABS.forEach(([t, l]) => it.push({ k: 'Project', n: `${p.name} / ${l}`, run: () => openProject(p.id, t) }));
   return it;
 }
 function paletteDraw() {
@@ -46,7 +46,7 @@ function paletteRun(i) {
 function paletteOpen() {
   if (!S || locking || !$('#lock').hidden || !$('#modal').hidden || !$('#confirm').hidden) return;
   const el = $('#palette');
-  el.innerHTML = `<div class="palette"><div class="pin"><input type="text" id="palIn" placeholder="Search apps, views and actions" autocomplete="off" spellcheck="false"></div>
+  el.innerHTML = `<div class="palette"><div class="pin"><input type="text" id="palIn" placeholder="Search projects, views and actions" autocomplete="off" spellcheck="false"></div>
     <div class="plist" id="palList"></div><div class="pfoot"><span>↑↓ select</span><span>Enter open</span><span>Esc close</span></div></div>`;
   el.hidden = false;
   palState = { items: paletteItems(), list: [], hot: 0, input: $('#palIn'), box: $('#palList') };

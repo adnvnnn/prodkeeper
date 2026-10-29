@@ -146,12 +146,12 @@ function viewTasksAll() {
   return `<div class="page-head"><h1>Tasks</h1><div class="seg">${TASK_FILTERS.map(seg).join('')}</div><span class="grow"></span>
       <button class="btn primary" data-action="task-new">${I.plus}New task</button></div>
     ${groups.length ? groups.map(({ p, list }) => `<div class="card section" style="margin-bottom:14px"><h2>${esc(p.name)}<span class="grow"></span><button class="btn sm" data-action="open-project" data-id="${p.id}" data-tab="tasks">Board</button></h2>${list.map(t => taskRowHtml(p, t, false)).join('')}</div>`).join('')
-      : `<div class="empty card">${I.tick}<h3>${S.projects.length ? 'No tasks' : 'Add an app first'}</h3></div>`}`;
+      : `<div class="empty card">${I.tick}<h3>${S.projects.length ? 'No tasks' : 'Add a project first'}</h3></div>`}`;
 }
 
 /* ---------- Edit dialog ---------- */
 function taskModal(pid, tid) {
-  if (!S.projects.length) { toast('Create an app first', true); return; }
+  if (!S.projects.length) { toast('Create a project first', true); return; }
   const p = proj(pid) || proj(V.pid) || S.projects[0];
   const t = tid ? p.tasks.find(x => x.id === tid) : { title: '', status: 'backlog', priority: 1, estimate: 0, branch: '', projectId: p.id };
   const opt = (arr, cur) => arr.map(([v, l]) => `<option value="${v}" ${String(v) === String(cur) ? 'selected' : ''}>${l}</option>`).join('');
@@ -160,7 +160,7 @@ function taskModal(pid, tid) {
   openModal(`<form id="taskForm" data-pid="${p.id}" data-id="${tid || ''}">${modalHead(tid ? `${taskKey(p, t)} · Edit task` : 'New task')}
     <div class="body">
       <div class="field"><label>Title</label><input type="text" name="title" value="${esc(t.title)}" required placeholder="What needs to be done?"></div>
-      <div class="two"><div class="field"><label>App</label><select name="projectId">${S.projects.map(x => `<option value="${x.id}" ${x.id === p.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
+      <div class="two"><div class="field"><label>Project</label><select name="projectId">${S.projects.map(x => `<option value="${x.id}" ${x.id === p.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Status</label><select name="status">${opt(Object.entries(T_STATUS), t.status)}</select></div></div>
       <div class="two"><div class="field"><label>Priority</label><select name="priority">${opt(T_PRIO.map((l, i) => [i, l]), t.priority)}</select></div>
         <div class="field"><label>Estimate (story points)</label><select name="estimate">${opt([[0, 'None'], ...T_POINTS.map(n => [n, n])], t.estimate || 0)}</select></div></div>

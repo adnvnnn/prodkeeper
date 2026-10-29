@@ -263,7 +263,7 @@ function kpi(label, value, sub, c, p) {
 
 /* ---------- The view ---------- */
 function viewReports() {
-  if (!S.projects.length) return `<div class="page-head"><h1>Reports</h1></div><div class="empty card">${I.activity}<h3>Add an app first</h3><p>Reports are built from your tasks, deploys, backups and git history.</p></div>`;
+  if (!S.projects.length) return `<div class="page-head"><h1>Reports</h1></div><div class="empty card">${I.activity}<h3>Add a project first</h3><p>Reports are built from your tasks, deploys, backups and git history.</p></div>`;
   const M = repModel(), { R, rng, cur, prev, buckets, scope } = M;
   const cats = buckets, loading = [...scope].some(id => C.rep[id] && C.rep[id].loading);
   const errs = [...scope].filter(id => C.rep[id] && C.rep[id].err).map(id => `${esc(proj(id).name)}: ${esc(C.rep[id].err)}`);
@@ -272,11 +272,11 @@ function viewReports() {
 
   const filters = `<div class="filters">${sel('range', REP_RANGES, R.range)}
     ${R.range === 'custom' ? `<input type="date" data-rep="from" value="${toISO(rng.from)}" max="${todayISO()}"><span class="sub">to</span><input type="date" data-rep="to" value="${toISO(dayStart(rng.to))}" max="${todayISO()}">` : ''}
-    ${sel('pid', [['', 'All apps'], ...S.projects.map(p => [p.id, esc(p.name)])], R.pid)}
+    ${sel('pid', [['', 'All projects'], ...S.projects.map(p => [p.id, esc(p.name)])], R.pid)}
     <label class="chk" title="Count only commits made with this repository's git user.email"><input type="checkbox" data-rep="mine" ${R.mine ? 'checked' : ''}> Only my commits</label>
     <span class="grow"></span><button class="btn" data-action="rep-copy">${I.copy}Copy summary</button></div>`;
   const note = `<div class="sub" style="margin-block:-4px 16px">${esc(rng.label)} · compared with ${esc(rng.plabel)} · grouped by ${rng.gran}${loading ? ' ' + chip('Reading git history…', 'soon') : ''}
-    ${noRepo ? `<div>${num(noRepo)} ${noRepo === 1 ? 'app has' : 'apps have'} no repository folder, so commits are not counted for ${noRepo === 1 ? 'it' : 'them'}.</div>` : ''}${errs.length ? `<div>Git history unavailable — ${errs.join('; ')}</div>` : ''}</div>`;
+    ${noRepo ? `<div>${num(noRepo)} ${noRepo === 1 ? 'project has' : 'projects have'} no repository folder, so commits are not counted for ${noRepo === 1 ? 'it' : 'them'}.</div>` : ''}${errs.length ? `<div>Git history unavailable — ${errs.join('; ')}</div>` : ''}</div>`;
 
   /* headline numbers */
   const dep = k => ofKind(k.runs, 'deploy'), bak = k => ofKind(k.runs, 'backup');
@@ -370,7 +370,7 @@ function viewReports() {
 
   const empty = !cur.done.length && !cur.created.length && !cur.commits.length && !cur.runs.length;
   return `<div class="page-head"><h1>Reports</h1></div>${filters}${note}
-    ${empty ? `<div class="alert warn" style="cursor:default">${I.alert}<span>Nothing was recorded in this period${loading ? ' yet' : ''}. Pick a longer range, or another app.</span></div>` : ''}
+    ${empty ? `<div class="alert warn" style="cursor:default">${I.alert}<span>Nothing was recorded in this period${loading ? ' yet' : ''}. Pick a longer range, or another project.</span></div>` : ''}
     <div class="kpis">${tiles}</div>
     <div class="cols2 rrow">
       ${repCard('Tasks created and completed', legend([['Completed', 'var(--s1)'], ['Created', 'var(--s2)']]) + taskChart)}
@@ -381,7 +381,7 @@ function viewReports() {
       ${repCard('Operations', legend(opSeries.map(s => [s.name, s.color])) + opsChart + `<table class="rt"><thead><tr><th>Type</th><th>Runs</th><th>Succeeded</th><th>Failed</th><th>Avg time</th></tr></thead><tbody>${opRows}</tbody></table>`)}
     </div>
     <div class="cols2 rrow">
-      ${repCard('Work by app', appRows.length ? hbars(appRows) : none('No activity in this period.'), 'tasks completed')}
+      ${repCard('Work by project', appRows.length ? hbars(appRows) : none('No activity in this period.'), 'tasks completed')}
       ${repCard('How long tasks took', leadChart + `<div class="sub">Median ${fmtSpan(cur.medianLead)} from created to done · ${fmtN(cur.lead.length)} tasks</div>`)}
     </div>
     <div class="cols2 rrow">
@@ -401,7 +401,7 @@ function viewReports() {
 function repSummary(M) {
   const { rng, cur, prev, R } = M, L = [];
   const dep = cur.runs.filter(r => r.k === 'deploy'), bak = cur.runs.filter(r => r.k === 'backup');
-  const scopeName = R.pid ? (proj(R.pid) || {}).name : 'All apps';
+  const scopeName = R.pid ? (proj(R.pid) || {}).name : 'All projects';
   L.push(`ProdKeeper report — ${scopeName}`, rng.label, '');
   L.push(`Tasks: ${fmtN(cur.done.length)} completed (${fmtN(cur.pts)} pt), ${fmtN(cur.created.length)} created; ${deltaText(cur.done.length, prev.done.length)}`);
   if (cur.medianLead != null) L.push(`Median lead time: ${fmtSpan(cur.medianLead)}`);

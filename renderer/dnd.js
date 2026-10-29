@@ -1,7 +1,7 @@
 'use strict';
 
-/* ======================= Drag and drop: reordering apps on the dashboard, moving tasks on the board =======================
- * Apps are always grouped by priority; the drag order is kept within a group, and dropping an app onto one of another
+/* ======================= Drag and drop: reordering projects on the projects page, moving tasks on the board =======================
+ * Projects are always grouped by priority; the drag order is kept within a group, and dropping a project onto one of another
  * priority moves it to that priority. Tasks move between board columns (or are reordered inside one); the board
  * only accepts tasks of its own app. */
 let dragState = null, dropMark = null;

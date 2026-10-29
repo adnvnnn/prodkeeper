@@ -13,7 +13,7 @@ const dur = h => (h.end ? ' · ' + fmtSec((h.end - h.start) / 1000) : '');
 const notSet = (msg, btn) => `<div class="empty card">${I.alert}<h3>${msg}</h3>${btn || ''}</div>`;
 
 /* ---------- Chrome: minimal top menu ---------- */
-const NAV_ITEMS = [['dashboard', 'Dashboard'], ['tasks', 'Tasks'], ['history', 'History'], ['reports', 'Reports'], ['vault', 'Vault'], ['settings', 'Settings']];
+const NAV_ITEMS = [['projects', 'Projects'], ['tasks', 'Tasks'], ['history', 'History'], ['reports', 'Reports'], ['vault', 'Vault'], ['settings', 'Settings']];
 function renderTopbar() {
   const A = computeAlerts(), bad = A.filter(a => a.sev === 'bad').length;
   const p = V.name === 'project' && proj(V.pid);
@@ -26,17 +26,17 @@ function renderTopbar() {
   $('#runBox').innerHTML = n ? `<button class="btn sm" data-action="run-open"><span class="rec"></span>Running</button>` : '';
 }
 
-/* ---------- Dashboard ---------- */
+/* ---------- Projects ---------- */
 function alertRow(a, hideName) {
   const act = a.pid ? `data-action="open-project" data-id="${a.pid}" data-tab="${a.tab}"` : 'data-action="go" data-to="vault"';
   return `<div class="alert ${a.sev}" ${act}>${I.alert}${hideName ? '' : `<b>${esc(a.name)}</b>`}<span${hideName ? ' style="color:var(--text)"' : ''}>${esc(a.text)}</span></div>`;
 }
-function viewDashboard() {
+function viewProjects() {
   if (!S.projects.length) {
     return `<div class="empty card" style="margin-top:20px">${I.deploy.replace('<svg', '<svg style="width:40px;height:40px"')}
-      <h3>Add your first app</h3>
-      <p>Give each app its git repository, site URL, deploy command, backup and CI, and run everything from one place. Secrets stay encrypted in the vault.</p>
-      <button class="btn primary" data-action="new-project">${I.plus}Add app</button></div>`;
+      <h3>Add your first project</h3>
+      <p>Give each project its git repository, site URL, deploy command, backup and CI, and run everything from one place. Secrets stay encrypted in the vault.</p>
+      <button class="btn primary" data-action="new-project">${I.plus}Add project</button></div>`;
   }
   const list = orderedProjects(), AL = computeAlerts();
   // when there is more than one priority level, each group gets a heading
@@ -46,9 +46,9 @@ function viewDashboard() {
     body = [2, 1, 0].filter(k => list.some(p => p.priority === k)).map(k => `<div class="group">${T_PRIO[k]} priority</div><div class="apps">${list.filter(p => p.priority === k).map(p => prow(p, AL)).join('')}</div>`).join('');
   } else body = `<div class="apps">${list.map(p => prow(p, AL)).join('')}</div>`;
   return `
-    <div class="page-head"><h1>Apps</h1><span class="grow"></span>
-      <button class="btn" data-action="refresh-all" title="Re-check all apps">${I.refresh}Refresh</button>
-      <button class="btn primary" data-action="new-project">${I.plus}New app</button></div>
+    <div class="page-head"><h1>Projects</h1><span class="grow"></span>
+      <button class="btn" data-action="refresh-all" title="Re-check all projects">${I.refresh}Refresh</button>
+      <button class="btn primary" data-action="new-project">${I.plus}New project</button></div>
     ${body}`;
 }
 function ciChip(p) {
@@ -59,7 +59,7 @@ function ciChip(p) {
   return r ? `<span title="${esc(r.name)}">${ciBadge(r)}</span>` : '';
 }
 const SEV_LABEL = { ok: 'Healthy', warn: 'Attention', bad: 'Critical', none: '' };
-/** One app: loud only when something is wrong, otherwise quiet */
+/** One project: loud only when something is wrong, otherwise quiet */
 function prow(p, AL) {
   const g = C.git[p.id], sev = projSeverity(p.id), mine = AL.filter(a => a.pid === p.id);
   const line = mine.length ? esc(mine[0].text) + (mine.length > 1 ? ` <span class="sub">and ${num(mine.length - 1)} more</span>` : '')
@@ -88,7 +88,7 @@ function runButtons(p) {
 }
 function viewProject() {
   const p = proj(V.pid);
-  if (!p) { V.name = 'dashboard'; return viewDashboard(); }
+  if (!p) { V.name = 'projects'; return viewProjects(); }
   const tabs = { tasks: tabTasks, status: tabStatus, git: tabGit, deploy: tabDeploy, backup: tabBackup, ci: tabCI, vault: p => vaultSection(p.id, false), settings: tabSettings };
   return `
     <div class="page-head"><h1>${esc(p.name)}</h1>
@@ -105,7 +105,7 @@ function viewProject() {
 
 /* ---------- Git ---------- */
 function tabGit(p) {
-  if (!p.repoPath) return notSet('The git repository path is not set for this app', `<button class="btn primary" data-action="edit-project" data-id="${p.id}">Set path</button>`);
+  if (!p.repoPath) return notSet('The git repository path is not set for this project', `<button class="btn primary" data-action="edit-project" data-id="${p.id}">Set path</button>`);
   const g = C.git[p.id];
   if (!g) return '<div class="empty card">Loading…</div>';
   if (g.error) return notSet(esc(g.error), `<button class="btn" data-action="edit-project" data-id="${p.id}">Edit path</button>`);
@@ -216,7 +216,7 @@ function viewHistory() {
   const sel = (k, opts, val) => `<select data-hf="${k}">${opts.map(([v, l]) => `<option value="${v}" ${String(v) === String(val) ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
   return `<div class="page-head"><h1>Operation history</h1><span class="sub">${num(list.length)} ${list.length === 1 ? 'entry' : 'entries'}</span><span class="grow"></span><button class="btn danger" data-action="hist-clear">Clear</button></div>
     <div class="filters">${sel('hKind', [['', 'All types'], ['deploy', 'Deploy'], ['backup', 'Backup'], ['dbupdate', 'Database update'], ['publish', 'Publish'], ['git', 'Git'], ['run', 'Run'], ['build', 'Build']], V.hKind)}
-    ${sel('hProj', [['', 'All apps'], ...S.projects.map(p => [p.id, p.name])], V.hProj)}</div>
+    ${sel('hProj', [['', 'All projects'], ...S.projects.map(p => [p.id, p.name])], V.hProj)}</div>
     <div class="card section">${list.length ? list.slice(0, 150).map(histRow).join('') : '<div class="empty">No operations recorded yet</div>'}</div>`;
 }
 
@@ -236,8 +236,8 @@ function vaultSection(pid, global) {
       ${v.hasSecret ? `<button class="iconbtn" data-action="v-reveal" data-id="${v.id}" title="Show / hide the secret (hides automatically after 15 seconds)">${I.eye}</button><button class="iconbtn" data-action="v-copy" data-id="${v.id}" title="Copy secret">${I.copy}</button>` : ''}
       <button class="iconbtn" data-action="v-edit" data-id="${v.id}" title="Edit">${I.edit}</button></div>`;
   };
-  const filter = global ? `<select data-hf="vProj"><option value="">All apps</option><option value="-" ${V.vProj === '-' ? 'selected' : ''}>Global</option>${S.projects.map(p => `<option value="${p.id}" ${V.vProj === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>` : '';
-  return `${global ? `<div class="page-head"><h1>Password vault</h1>${filter}<span class="grow"></span><button class="btn primary" data-action="v-new">${I.plus}New item</button></div>` : `<div class="page-head" style="margin-top:0"><span class="sub">Secrets for this app and global items</span><span class="grow"></span><button class="btn primary" data-action="v-new">${I.plus}New item</button></div>`}
+  const filter = global ? `<select data-hf="vProj"><option value="">All projects</option><option value="-" ${V.vProj === '-' ? 'selected' : ''}>Global</option>${S.projects.map(p => `<option value="${p.id}" ${V.vProj === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>` : '';
+  return `${global ? `<div class="page-head"><h1>Password vault</h1>${filter}<span class="grow"></span><button class="btn primary" data-action="v-new">${I.plus}New item</button></div>` : `<div class="page-head" style="margin-top:0"><span class="sub">Secrets for this project and global items</span><span class="grow"></span><button class="btn primary" data-action="v-new">${I.plus}New item</button></div>`}
     ${banner}<div class="card section">${list.length ? list.map(row).join('') : `<div class="empty">${I.key}<h3>The vault is empty</h3><p>Keep server, database, token and key secrets here. You can use them in deploy and backup commands as <code>NAME=@label</code>.</p></div>`}</div>`;
 }
 const viewVault = () => vaultSection('', true);
@@ -254,7 +254,7 @@ function viewSettings() {
         <div class="row"><button class="btn primary" data-action="lock-now">${I.lock}Lock now</button><button class="btn" data-action="pw-change">Change master password</button></div>
         <div class="field" style="margin-top:14px"><label>Auto-lock after inactivity</label>
           <select data-setting="autoLockMin" style="max-width:220px">${opt([[0, 'Never'], [5, '5 minutes'], [10, '10 minutes'], [15, '15 minutes'], [30, '30 minutes'], [60, '1 hour']], al)}</select></div></div>
-      <div class="card"><h2>Tasks</h2><p class="sub">Warn when more tasks than this are in progress at once (the WIP limit). It applies to every app; "Off" turns the warning off.</p>
+      <div class="card"><h2>Tasks</h2><p class="sub">Warn when more tasks than this are in progress at once (the WIP limit). It applies to every project; "Off" turns the warning off.</p>
         <select data-setting="wip" style="max-width:220px">${opt([[0, 'Off'], [1, '1 task'], [2, '2 tasks'], [3, '3 tasks'], [4, '4 tasks'], [5, '5 tasks'], [6, '6 tasks'], [8, '8 tasks']], S.settings.wip)}</select></div>
       <div class="card"><h2>Health monitoring</h2><p class="sub">How often should sites (and git) be checked automatically?</p>
         <select data-setting="healthMin">${opt([[0, 'Off'], [1, 'Every 1 minute'], [5, 'Every 5 minutes'], [15, 'Every 15 minutes'], [60, 'Every hour']], S.settings.healthMin)}</select></div>
@@ -381,13 +381,13 @@ const ENV_HINT = 'one per line: NAME=@vault-label  or  NAME=value';
 
 function projectModal(id) {
   const p = id ? proj(id) : normProject({ name: '' });
-  openModal(`<form id="projForm" data-id="${id || ''}">${modalHead(id ? 'Edit app' : 'New app')}
+  openModal(`<form id="projForm" data-id="${id || ''}">${modalHead(id ? 'Edit project' : 'New project')}
     <div class="body">
-      <div class="field"><label>App name</label><input type="text" name="name" value="${esc(p.name)}" required placeholder="e.g. Online store"></div>
-      <div class="field"><label>App priority (display order on the dashboard and menu)</label><select name="priority">${T_PRIO.map((l, i) => `<option value="${i}" ${p.priority === i ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="field"><label>Project name</label><input type="text" name="name" value="${esc(p.name)}" required placeholder="e.g. Online store"></div>
+      <div class="field"><label>Project priority (display order on the projects page and menu)</label><select name="priority">${T_PRIO.map((l, i) => `<option value="${i}" ${p.priority === i ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
       ${folderField('Git repository folder (on this computer)', 'repoPath', p.repoPath, 'C:\\Projects\\my-app')}
-      <div class="sub">Run / build commands, website URLs and GitHub CI are in the app's <b>Settings</b> tab.</div>
-    </div>${footerBtns(id ? `<button type="button" class="btn danger" data-action="del-project" data-id="${id}">${I.trash}Remove from app</button>` : '')}</form>`);
+      <div class="sub">Run / build commands, website URLs and GitHub CI are in the project's <b>Settings</b> tab.</div>
+    </div>${footerBtns(id ? `<button type="button" class="btn danger" data-action="del-project" data-id="${id}">${I.trash}Remove project</button>` : '')}</form>`);
 }
 
 /* ---------- Settings tab: each group is saved on its own ---------- */
@@ -506,7 +506,7 @@ function syncVaultKind() {
   s.placeholder = s.dataset.stored ? '••••••••' : f.elements.kind.value === 'db' ? 'Server=...;Database=...;User Id=...;Password=...' : '';
 }
 
-/** "Add from vault" under an environment-variables box: lists the items the app/project can use */
+/** "Add from vault" under an environment-variables box: lists the items the project can use */
 function vaultPick(pid) {
   const items = C.vault.filter(v => v.hasSecret && (v.projectId === pid || v.projectId === '')).sort((a, b) => (b.kind === 'db') - (a.kind === 'db') || a.label.localeCompare(b.label));
   if (!items.length) return '<div class="sub">Store a connection string or token in the Vault to pick it from here.</div>';

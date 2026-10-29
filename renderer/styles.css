@@ -114,7 +114,7 @@ code, kbd, .mono { font-family: var(--mono); }
 .empty p { max-width: 520px; margin: 0 auto 16px; }
 .empty svg { width: 30px; height: 30px; color: var(--faint); }
 
-/* ---------- Apps list (dashboard) ---------- */
+/* ---------- Projects list ---------- */
 .group { margin: 26px auto 8px; color: var(--faint); font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
 .page-head + .group, .card + .group:first-child { margin-top: 0; }
 .apps { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); overflow: hidden; }

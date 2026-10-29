@@ -5,7 +5,7 @@ const KINDS = { server: 'Server / SSH', db: 'Database', api: 'API key / token', 
 
 let S = null; // persisted data: projects, history, settings
 const C = { git: {}, gd: {}, tb: {}, health: {}, ci: {}, wf: {}, backups: {}, vault: [] }; // transient cache
-const V = { name: 'dashboard', pid: null, tab: 'tasks', bfilter: 'all', hKind: '', hProj: '', vProj: '', runId: null };
+const V = { name: 'projects', pid: null, tab: 'tasks', bfilter: 'all', hKind: '', hProj: '', vProj: '', runId: null };
 const RUN = {}; // jobs in flight: id -> {h}
 
 const blank = () => ({ version: 2, projects: [], history: [], runlog: [], archive: [], checks: {}, settings: { theme: 'dark', healthMin: 5, notified: '', autoLockMin: 15, notifyOn: true, wip: T_WIP_DEFAULT }, pet: normPet() });
@@ -58,7 +58,7 @@ function save() { clearTimeout(saveTimer); saveTimer = setTimeout(() => { if (!N
 window.addEventListener('beforeunload', () => { if (!NOSAVE && S) native.data.saveSync(S); });
 
 const proj = id => S.projects.find(p => p.id === id);
-/** Display order of apps: by priority, high first (stable; drag order is kept within each priority) */
+/** Display order of projects: by priority, high first (stable; drag order is kept within each priority) */
 const orderedProjects = () => [...S.projects].sort((a, b) => b.priority - a.priority);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -263,8 +263,8 @@ function go(name, extra = {}) {
 function render() {
   if (typeof locking !== 'undefined' && locking) return; // do not rebuild content while locking
   renderTopbar();
-  const views = { dashboard: viewDashboard, tasks: viewTasksAll, project: viewProject, history: viewHistory, reports: viewReports, vault: viewVault, settings: viewSettings };
-  $('#main').innerHTML = (views[V.name] || viewDashboard)();
+  const views = { projects: viewProjects, tasks: viewTasksAll, project: viewProject, history: viewHistory, reports: viewReports, vault: viewVault, settings: viewSettings };
+  $('#main').innerHTML = (views[V.name] || viewProjects)();
   if (V.name === 'settings') fillSettings();
 }
 function softRender() {
@@ -532,7 +532,7 @@ const actions = {
     S.history = S.history.filter(h => h.projectId !== p.id);
     S.runlog = S.runlog.filter(r => r.pid !== p.id);
     S.archive = S.archive.filter(a => a.pid !== p.id);
-    save(); closeModal(); await loadVault(); go('dashboard');
+    save(); closeModal(); await loadVault(); go('projects');
   },
   'refresh-all': () => refreshAll(true),
   'refresh-project': async () => { await enterTab(); toast('Refreshed'); },
@@ -824,7 +824,7 @@ function syncAlerts(first) {
 native.app.onNavigate(n => {
   if (!n) return;
   if (n.lock) { lockNow(); return; }
-  if (n.pid && proj(n.pid)) openProject(n.pid, n.tab || 'tasks'); else go('dashboard');
+  if (n.pid && proj(n.pid)) openProject(n.pid, n.tab || 'tasks'); else go('projects');
 });
 
 /* ======================= Lock and master password ======================= */
