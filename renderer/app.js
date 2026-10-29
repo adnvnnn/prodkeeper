@@ -582,6 +582,7 @@ const actions = {
     if (!(await askConfirm(`Delete the branch "${n}" from the remote (origin)? This affects the shared repository.`))) return;
     gitOp(V.pid, 'deleteRemoteBranch', { name: n }, `Delete remote ${n}`);
   },
+  'git-commit': () => commitModal(),
   'git-new-branch': () => branchModal(),
   'git-tag-new': () => tagModal(),
   'git-tag-push': el => gitOp(V.pid, 'pushTag', { name: el.dataset.name }, `Push tag ${el.dataset.name}`),
@@ -736,6 +737,20 @@ document.addEventListener('submit', async e => {
     const name = f.elements.name.value.trim(), from = f.elements.from.value;
     closeModal();
     gitOp(V.pid, 'createBranch', { name, from: from || undefined }, `Create branch ${name}`);
+  } else if (f.id === 'commitForm') {
+    const message = f.elements.message.value.trim(), push = f.elements.push.checked, pid = V.pid;
+    const chosen = [...f.querySelectorAll('input[name=f]')].filter(c => c.checked).map(c => commitFiles[Number(c.value)]);
+    if (!chosen.length) { toast('Select at least one file', true); return; }
+    // everything selected (or too many to list) = commit all, so files beyond the list are not left out
+    const everything = f.dataset.truncated === '1' || chosen.length === commitFiles.length;
+    const paths = everything ? undefined : chosen.flatMap(x => x.orig ? [x.path, x.orig] : [x.path]);
+    const stage = everything ? undefined : chosen.map(x => x.path);
+    closeModal();
+    const r = await gitOp(pid, 'commit', { message, paths, stage }, 'Commit', { quiet: push });
+    if (!r.error && push) {
+      const g = C.git[pid];
+      gitOp(pid, 'push', { branch: g.branch, setUpstream: !g.upstream }, `Push ${g.branch}`);
+    }
   } else if (f.id === 'tagForm') {
     const name = f.elements.name.value.trim(), message = f.message.value.trim(), push = f.push.checked;
     closeModal();
@@ -758,6 +773,11 @@ document.addEventListener('change', e => {
   if (e.target.name === 'type' && e.target.closest('#backupForm')) syncBackupType();
   if (e.target.name === 'kind' && e.target.closest('#vaultForm')) syncVaultKind();
   if (e.target.classList.contains('vpick')) pickVaultItem(e.target);
+  if (e.target.name === 'all' && e.target.closest('#commitForm')) e.target.closest('form').querySelectorAll('input[name=f]').forEach(c => { c.checked = e.target.checked; });
+  if (e.target.name === 'f' && e.target.closest('#commitForm')) {
+    const boxes = [...e.target.closest('form').querySelectorAll('input[name=f]')], all = e.target.closest('form').elements.all;
+    if (all) all.checked = boxes.every(c => c.checked);
+  }
   if (e.target.dataset.setting === 'autoLockMin') { S.settings.autoLockMin = Number(e.target.value); save(); }
   if (e.target.dataset.setting === 'notifyOn') { S.settings.notifyOn = e.target.checked; save(); }
   if (e.target.dataset.setting === 'wip') { S.settings.wip = Number(e.target.value) || 0; save(); renderTopbar(); syncAlerts(); }

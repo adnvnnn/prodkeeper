@@ -115,7 +115,8 @@ function tabGit(p) {
       ${g.upstream ? `<span class="sub">← ${esc(g.upstream)}${g.gone ? ' (deleted on the remote)' : ''}</span>` : chip('No upstream', 'today')}
       ${g.ahead ? chip(`${num(g.ahead)} unpushed`, 'soon', I.up) : ''}${g.behind ? chip(`${num(g.behind)} behind remote`, 'today', I.down) : ''}${g.dirty ? chip(`${num(g.dirty)} changed`, 'today') : chip('Clean', 'okc')}</div>
       <div class="row"><button class="btn sm" data-action="git-fetch" data-id="${p.id}">${I.refresh}Fetch</button><button class="btn sm" data-action="git-pull" data-id="${p.id}">${I.down}Pull</button>
-      ${g.ahead || !g.upstream ? `<button class="btn sm primary" data-action="git-push" data-id="${p.id}">${I.up}Push</button>` : ''}<button class="btn sm" data-action="git-new-branch">${I.plus}New branch</button></div></div>
+      ${g.dirty ? `<button class="btn sm primary" data-action="git-commit">${I.tick}Commit</button>` : ''}
+      ${g.ahead || !g.upstream ? `<button class="btn sm ${g.dirty ? '' : 'primary'}" data-action="git-push" data-id="${p.id}">${I.up}Push</button>` : ''}<button class="btn sm" data-action="git-new-branch">${I.plus}New branch</button></div></div>
     ${g.remote ? `<div class="sub" style="margin-top:6px;direction:ltr;text-align:left">${esc(g.remote)}</div>` : ''}
     ${g.dirty ? `<details style="margin-top:10px"><summary>Changed files (${num(g.dirty)})</summary><div class="files">${g.files.map(f => `<div><code>${esc(f.xy)}</code> ${esc(f.path)}</div>`).join('')}${g.dirty > g.files.length ? '<div class="sub">…</div>' : ''}</div></details>` : ''}</div>`;
   if (!gd) return head + '<div class="empty card">Loading branches…</div>';
@@ -540,6 +541,25 @@ function branchModal() {
     <div class="body"><div class="field"><label>Branch name</label><input type="text" name="name" dir="ltr" required placeholder="feature/my-change"></div>
       <div class="field"><label>Create from</label><select name="from"><option value="">Current branch (${esc(g.branch)})</option>${locals.filter(b => !b.current).map(b => `<option value="${esc(b.name)}">${esc(b.name)}</option>`).join('')}</select></div></div>
     ${footerBtns().replace('Save', 'Create')}</form>`, { small: true });
+}
+let commitFiles = []; // files listed in the open commit dialog
+const GIT_XY = { '??': 'New', A: 'Added', M: 'Modified', D: 'Deleted', R: 'Renamed', C: 'Copied', U: 'Conflict' };
+async function commitModal() {
+  const p = proj(V.pid), g = C.git[p.id];
+  const r = await native.git('changes', p.repoPath);
+  if (r.error) { showError('Commit', r.error); return; }
+  if (!r.files.length) { toast('Nothing to commit'); return; }
+  const kind = f => f.xy === '??' ? GIT_XY['??'] : GIT_XY[f.xy.trim()[0]] || GIT_XY[f.xy.trim()[1]] || 'Changed';
+  const rows = r.files.map((f, i) => `<label class="chk cfile"><input type="checkbox" name="f" value="${i}" checked ${r.truncated ? 'disabled' : ''}><code>${esc(kind(f))}</code><span dir="ltr">${esc(f.orig ? `${f.orig} → ${f.path}` : f.path)}</span></label>`).join('');
+  commitFiles = r.files;
+  openModal(`<form id="commitForm" data-truncated="${r.truncated ? 1 : 0}">${modalHead(`Commit to ${esc(g.branch)}`)}
+    <div class="body"><div class="field"><label>Message</label><textarea name="message" rows="3" required placeholder="What changed and why"></textarea></div>
+      <div class="field"><label>Files (${num(r.files.length)}${r.truncated ? '+' : ''})</label>
+        ${r.truncated ? `<div class="sub">Too many files to list: all changes will be committed</div>` : `<label class="chk"><input type="checkbox" name="all" checked> Select all</label>`}
+        <div class="cfiles">${rows}</div></div>
+      <label class="chk"><input type="checkbox" name="push"> Push after committing</label></div>
+    ${footerBtns().replace('Save', 'Commit')}</form>`, { small: true });
+  const ta = $('#commitForm textarea'); if (ta) ta.focus();
 }
 function tagModal() {
   openModal(`<form id="tagForm">${modalHead('New tag on the current branch')}
