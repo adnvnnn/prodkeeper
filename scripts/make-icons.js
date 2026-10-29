@@ -1,26 +1,26 @@
 'use strict';
-// Renders the app logo to assets/: icon.png, icon.ico and tray-{ok,warn,bad}.png.
+// Renders the app icon (the pet) to assets/: icon.png, icon.ico and tray-{ok,warn,bad}.png.
 // Run with:  npx electron scripts/make-icons.js
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
 const OUT = path.join(__dirname, '..', 'assets');
-const INK = '#0a0a0b', LINE = '#2b2b31', FG = '#ededef';
+const { logo } = require('../renderer/petsprite.js');
 
-/** Dark tile with a solid shield; an upward chevron is cut out of it. `dot` adds a status dot (tray). */
-const logo = dot => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="100%" height="100%">
-  <defs><mask id="m"><rect width="64" height="64" fill="#fff"/><polyline points="22,36 32,26 42,36" fill="none" stroke="#000" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/></mask></defs>
-  <rect x=".5" y=".5" width="63" height="63" rx="14" fill="${INK}" stroke="${LINE}"/>
-  <path mask="url(#m)" fill="${FG}" d="M32 9 L52 16.5 V31 C52 44 43.5 53 32 57.5 C20.5 53 12 44 12 31 V16.5 Z"/>
-  ${dot ? `<circle cx="49" cy="49" r="12" fill="${INK}"/><circle cx="49" cy="49" r="8.5" fill="${dot}"/>` : ''}
-</svg>`;
+/** The app icon is the pet (renderer/petsprite.js): its face on a dark 16 x 16 pixel tile, so power-of-two sizes stay pixel-perfect.
+ *  `dot` adds a status dot (tray). */
+const pet = dot => logo({ dot });
 
+/* Rasterises the SVG vector directly at size x size on a canvas (a window cannot be made smaller than ~32px and would distort the small sizes) */
 async function render(win, svg, size) {
-  win.setContentSize(size, size);
-  await win.loadURL('data:text/html,' + encodeURIComponent(`<body style="margin:0;background:transparent;overflow:hidden">${svg}</body>`));
-  await new Promise(r => setTimeout(r, 250));
-  return (await win.webContents.capturePage()).toPNG();
+  const src = 'data:image/svg+xml;base64,' + Buffer.from(svg.replace('width="100%" height="100%"', `width="${size}" height="${size}"`)).toString('base64');
+  const url = await win.webContents.executeJavaScript(`new Promise((ok, no) => {
+    const img = new Image(); img.onerror = () => no(new Error('svg failed'));
+    img.onload = () => { const c = document.createElement('canvas'); c.width = c.height = ${size}; c.getContext('2d').drawImage(img, 0, 0, ${size}, ${size}); ok(c.toDataURL('image/png')); };
+    img.src = ${JSON.stringify(src)};
+  })`);
+  return Buffer.from(url.split(',')[1], 'base64');
 }
 
 function ico(images) { // PNG-compressed ICO
@@ -39,15 +39,16 @@ function ico(images) { // PNG-compressed ICO
 
 app.whenReady().then(async () => {
   fs.mkdirSync(OUT, { recursive: true });
-  const win = new BrowserWindow({ show: false, frame: false, transparent: true, useContentSize: true, webPreferences: { offscreen: false } });
-  const base = logo('');
+  const win = new BrowserWindow({ show: false });
+  await win.loadURL('data:text/html,<body></body>');
+  const base = pet('');
   fs.writeFileSync(path.join(OUT, 'icon.png'), await render(win, base, 512));
   const sizes = [16, 24, 32, 48, 64, 128, 256];
   const images = [];
   for (const size of sizes) images.push({ size, png: await render(win, base, size) });
   fs.writeFileSync(path.join(OUT, 'icon.ico'), ico(images));
   for (const [name, dot] of [['ok', ''], ['warn', '#e8a23a'], ['bad', '#f0525f']]) {
-    fs.writeFileSync(path.join(OUT, `tray-${name}.png`), await render(win, logo(dot), 32));
+    fs.writeFileSync(path.join(OUT, `tray-${name}.png`), await render(win, pet(dot), 32));
   }
   console.log('icons written to', OUT);
   app.quit();

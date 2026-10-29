@@ -7,14 +7,15 @@ Built with Electron and vanilla JS (no UI framework, no build step).
 ## Features
 
 - **Git** – status, fetch / pull / push, branches, tags, recent commits.
-- **Deploy** – your own commands with a pre-flight checklist, live output and a post-deploy health check.
+- **Deploy** – your own commands with a pre-flight checklist, live output and a post-deploy health check; the same tab also holds *Publish to folder* (optionally versioned) and *Database update* (with an optional backup first).
 - **Live status** – HTTP checks with status code, latency, SSL expiry and uptime.
 - **Backups** – zip a folder or run any command, with retention and optional schedule.
 - **CI/CD** – GitHub Actions runs: view, re-run, cancel, dispatch.
 - **Agile board** – per-app kanban (Backlog → To do → In progress → Done) with drag and drop, WIP limit, story-point estimates, optional sprints with a closing retrospective, and tasks linked to git branches (a task closes itself when its branch is merged).
+- **Reports** – pick any period (last 7 days … this year, or a custom range) for all apps or one, and see what you did: tasks created and completed, open-task trend, commits, deploys / backups / database updates / publishes with success rates, lead time, work by app, when you work (weekday × hour), sprints, site uptime and failures, plus the list of completed work. Every figure is compared with the previous period, and "Copy summary" puts a text summary on the clipboard for meetings. Finished operations are kept in a compact long-lived log (the History page is capped), and finished tasks that you delete are still counted.
 - **Tasks popup** – a small always-on-top window that stays pinned above other windows until you close it (Ctrl+Alt+T toggles it, also in the tray menu; drag the header to move it) listing what is in progress and to do; tick a task to finish it, click it to open the app. It shows nothing while the app is locked.
 - **Vault** – AES-256-GCM encrypted secrets, injectable into commands as `NAME=@label` and masked in logs.
-- **Tray & alerts** – one alert list across all apps, Windows notifications, daily-task reminders.
+- **Tray & alerts** – one alert list across all apps, Windows notifications.
 
 ## Security
 

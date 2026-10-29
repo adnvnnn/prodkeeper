@@ -52,9 +52,6 @@ const I = {};
   ['cal', '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>'],
 ].forEach(([k, d]) => (I[k] = `<svg viewBox="0 0 24 24">${d}</svg>`));
 
-/** App logo: shield with an upward chevron cut out; follows the text color */
-const LOGO = '<svg viewBox="0 0 64 64"><defs><mask id="lgm"><rect width="64" height="64" fill="#fff"/><polyline points="22,36 32,26 42,36" fill="none" stroke="#000" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/></mask></defs><path mask="url(#lgm)" fill="currentColor" stroke="none" d="M32 9 L52 16.5 V31 C52 44 43.5 53 32 57.5 C20.5 53 12 44 12 31 V16.5 Z"/></svg>';
-
 /* ======================= Dates and formatting ======================= */
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const monthLen = (y, m) => new Date(y, m, 0).getDate();

@@ -16,6 +16,7 @@ function paletteItems() {
     if (!activeSprint(p)) it.push({ k: 'Action', n: `Start sprint — ${p.name}`, run: () => { V.tview = 'board'; openProject(p.id, 'tasks'); sprintStartModal(p.id); } });
   }
   it.push({ k: 'Action', n: 'Tasks popup (Ctrl+Alt+T)', run: () => native.popup && native.popup.toggle() });
+  it.push(...petPaletteItems());
   it.push({ k: 'Action', n: 'New vault item', run: () => vaultModal() });
   it.push({ k: 'Action', n: 'Refresh all apps', run: () => refreshAll(true) });
   it.push({ k: 'Action', n: 'Show alerts', run: () => { V.bell = true; renderTopbar(); } });
@@ -65,12 +66,12 @@ function paletteOpen() {
 Object.assign(actions, { palette: () => (palState ? paletteClose() : paletteOpen()) });
 document.addEventListener('mousedown', e => { if (e.target.id === 'palette') paletteClose(); });
 
-/* Hotkeys: Ctrl+K search, Ctrl+1..5 views, Alt+1..9 project tabs */
+/* Hotkeys: Ctrl+K search, Ctrl+1..6 views, Alt+1..9 project tabs */
 document.addEventListener('keydown', e => {
   if (!S || locking || !$('#lock').hidden) return;
   if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') { e.preventDefault(); actions.palette(); return; }
   if (palState || !$('#modal').hidden || !$('#confirm').hidden) return;
-  if (e.ctrlKey && !e.altKey && /^[1-5]$/.test(e.key)) {
+  if (e.ctrlKey && !e.altKey && /^[1-6]$/.test(e.key)) {
     e.preventDefault();
     actions.go({ dataset: { to: NAV_ITEMS[Number(e.key) - 1][0] } });
   } else if (e.altKey && !e.ctrlKey && /^[1-9]$/.test(e.key) && V.name === 'project' && TABS[Number(e.key) - 1]) {

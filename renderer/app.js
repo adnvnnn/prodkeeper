@@ -8,12 +8,14 @@ const C = { git: {}, gd: {}, tb: {}, health: {}, ci: {}, wf: {}, backups: {}, va
 const V = { name: 'dashboard', pid: null, tab: 'tasks', bfilter: 'all', hKind: '', hProj: '', vProj: '', runId: null };
 const RUN = {}; // jobs in flight: id -> {h}
 
-const blank = () => ({ version: 2, projects: [], history: [], checks: {}, settings: { theme: 'dark', healthMin: 5, notified: '', autoLockMin: 15, notifyOn: true, dailyAt: '10:00', nagMin: 60 } });
+const blank = () => ({ version: 2, projects: [], history: [], runlog: [], archive: [], checks: {}, settings: { theme: 'dark', healthMin: 5, notified: '', autoLockMin: 15, notifyOn: true, wip: T_WIP_DEFAULT }, pet: normPet() });
 const normProject = p => normTasks({
   repoPath: '', ...p, desc: undefined, notes: undefined, color: undefined,
   priority: [0, 1, 2].includes(p.priority) ? p.priority : 1,
   envs: p.envs || [], deploys: p.deploys || [], backups: p.backups || [], tasks: p.tasks || [], ops: p.ops || [],
   ci: { repo: '', tokenId: '', ...(p.ci || {}) },
+  run: { command: '', shell: 'cmd', url: '', envSpec: '', dbId: '', ...(p.run || {}) },
+  build: { command: '', shell: 'cmd', envSpec: '', dbId: '', ...(p.build || {}) },
   sprints: Array.isArray(p.sprints) ? p.sprints : [],
   taskSeq: p.taskSeq || 0,
 });
@@ -35,10 +37,18 @@ function normalize(d) {
     ...b, version: 2,
     projects: (Array.isArray(d.projects) ? d.projects : []).map(normProject),
     history: Array.isArray(d.history) ? d.history : [],
+    runlog: Array.isArray(d.runlog) ? d.runlog : [],
+    archive: Array.isArray(d.archive) ? d.archive : [],
     checks: d.checks && typeof d.checks === 'object' ? d.checks : {},
     settings: { ...b.settings, ...(d.settings || {}) },
+    pet: normPet(d.pet),
   };
   if (!['system', 'light', 'dark'].includes(out.settings.theme)) out.settings.theme = 'dark';
+  if (!(out.settings.wip >= 0)) { // the WIP limit used to be set per app: keep the first one that was set
+    const old = out.projects.find(p => p.wip >= 0);
+    out.settings.wip = old ? old.wip : T_WIP_DEFAULT;
+  }
+  out.settings.wip = Math.round(out.settings.wip);
   return out;
 }
 
@@ -55,7 +65,32 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 function addHistory(h) {
   S.history.unshift(h);
   if (S.history.length > 400) S.history.length = 400;
+  logRun(h);
   save();
+}
+
+/* The history above is capped and can be cleared, so finished operations are also kept as a compact, long-lived log
+ * (S.runlog). Reports read from it; a quarterly report would otherwise lose most of its deploys and backups.
+ * a = 1 marks runs the app started by itself (scheduled backups), which are not "you at work". */
+const RUNLOG_MAX = 20000;
+const runlogIds = new Set();
+function logRun(h) {
+  if (!h || h.status === 'running' || runlogIds.has(h.id)) return;
+  runlogIds.add(h.id);
+  S.runlog.push({ id: h.id, t: h.start, d: h.end ? h.end - h.start : 0, pid: h.projectId, k: h.kind, s: h.status, n: String(h.title || '').slice(0, 80), a: h.auto ? 1 : 0 });
+  if (S.runlog.length > RUNLOG_MAX) S.runlog.splice(0, S.runlog.length - RUNLOG_MAX);
+}
+/** On startup: index the log and add any finished history that is not in it yet (data from before the log existed) */
+function syncRunlog() {
+  runlogIds.clear();
+  S.runlog.forEach(r => runlogIds.add(r.id));
+  for (const h of [...S.history].reverse()) {
+    if (h.kind === 'backup' && h.auto === undefined) { // older runs: a backup with a schedule was most likely started by it
+      const b = (proj(h.projectId) || { backups: [] }).backups.find(x => x.id === h.refId);
+      h.auto = !!(b && b.everyHours > 0);
+    }
+    logRun(h);
+  }
 }
 const lastRun = (refId, kind) => S.history.find(h => h.refId === refId && (!kind || h.kind === kind) && h.status !== 'running');
 const isRunning = refId => Object.values(RUN).some(r => r.h.refId === refId && r.h.status === 'running');
@@ -109,11 +144,11 @@ async function enterTab() {
   const p = proj(V.pid);
   if (!p) return;
   const t = V.tab, jobs = [loadGit(p)];
-  if (t === 'git') jobs.push(loadGitDetail(p));
+  if (t === 'git' || t === 'ci') jobs.push(loadGitDetail(p));
   if (t === 'tasks') jobs.push(loadTaskBranches(p));
-  if (t === 'ci' || t === 'overview' || t === 'tasks') jobs.push(loadCI(p));
+  if (t === 'ci' || t === 'tasks') jobs.push(loadCI(p));
   if (t === 'ci') jobs.push(loadWf(p));
-  if (t === 'overview' || t === 'status') jobs.push(loadHealth(p));
+  if (t === 'status') jobs.push(loadHealth(p));
   if (t === 'backup') p.backups.forEach(b => jobs.push(loadBackups(b)));
   await Promise.all(jobs);
   softRender();
@@ -166,7 +201,7 @@ function computeAlerts() {
     }
     for (const o of p.ops) {
       const r = lastRun(o.id, o.type === 'db' ? 'dbupdate' : 'publish');
-      if (r && r.status === 'fail') add(p, 'bad', `The last ${o.type === 'db' ? 'database update' : 'publish'} "${iso(o.name)}" failed`, 'daily');
+      if (r && r.status === 'fail') add(p, 'bad', `The last ${o.type === 'db' ? 'database update' : 'publish'} "${iso(o.name)}" failed`, 'deploy');
     }
     for (const b of p.backups) {
       const r = lastRun(b.id, 'backup');
@@ -192,22 +227,50 @@ function projSeverity(pid) {
 }
 
 /* ======================= Rendering ======================= */
+/* Back / forward history (mouse side buttons, Alt+Left / Alt+Right): one entry per page, project tab or task view */
+const NAV = { stack: [], i: -1, restoring: false };
+const navKey = () => `${V.name}|${V.pid}|${V.tab}|${V.tview}`;
+function navPush() {
+  if (NAV.restoring) return;
+  const cur = NAV.stack[NAV.i];
+  if (cur && cur.key === navKey()) return;
+  NAV.stack.length = NAV.i + 1;
+  NAV.stack.push({ key: navKey(), name: V.name, pid: V.pid, tab: V.tab, tview: V.tview });
+  if (NAV.stack.length > 100) NAV.stack.shift();
+  NAV.i = NAV.stack.length - 1;
+}
+navPush(); // the starting page
+function navMove(step) {
+  const i = NAV.i + step;
+  if (i < 0 || i >= NAV.stack.length || !$('#modal').hidden) return;
+  NAV.i = i;
+  const { name, pid, tab, tview } = NAV.stack[i];
+  Object.assign(V, { name, pid, tab, tview });
+  NAV.restoring = true;
+  try {
+    if (name === 'vault') loadVault().then(softRender);
+    render();
+    $('#main').scrollTop = 0;
+    if (name === 'project') enterTab();
+  } finally { NAV.restoring = false; }
+}
 function go(name, extra = {}) {
   Object.assign(V, { name }, extra);
+  navPush();
   render();
   $('#main').scrollTop = 0;
 }
 function render() {
   if (typeof locking !== 'undefined' && locking) return; // do not rebuild content while locking
   renderTopbar();
-  const views = { dashboard: viewDashboard, tasks: viewTasksAll, project: viewProject, history: viewHistory, vault: viewVault, settings: viewSettings };
+  const views = { dashboard: viewDashboard, tasks: viewTasksAll, project: viewProject, history: viewHistory, reports: viewReports, vault: viewVault, settings: viewSettings };
   $('#main').innerHTML = (views[V.name] || viewDashboard)();
   if (V.name === 'settings') fillSettings();
 }
 function softRender() {
   if (typeof dragState !== 'undefined' && dragState) return; // do not rebuild the page under a drag in progress
   const ae = document.activeElement;
-  if (!$('#modal').hidden || (ae && $('#main').contains(ae) && /INPUT|SELECT|TEXTAREA/.test(ae.tagName))) { renderTopbar(); return; }
+  if (!$('#modal').hidden || (ae && $('#main').contains(ae) && /INPUT|SELECT|TEXTAREA/.test(ae.tagName)) || $('#main form.setf[data-dirty]')) { renderTopbar(); return; } // never rebuild a form with unsaved edits
   const m = $('#main'), y = m.scrollTop;
   render();
   m.scrollTop = y;
@@ -239,10 +302,11 @@ function appendLog(id, text) {
 }
 native.job.onOutput(({ id, text }) => appendLog(id, text));
 
-async function runJob({ pid, kind, refId, title, spec, silent }) {
+async function runJob({ pid, kind, refId, title, spec, silent, auto }) {
   if (isRunning(refId)) return toast('This job is already running', true);
   const id = uid();
   const h = { id, projectId: pid, kind, refId, title, start: Date.now(), status: 'running', log: '' };
+  if (auto) h.auto = true;
   RUN[id] = { h };
   addHistory(h);
   if (!silent) openRunModal(id);
@@ -257,6 +321,7 @@ async function runJob({ pid, kind, refId, title, spec, silent }) {
     appendLog(id, `\n— Finished with code ${res.code} after ${fmtSec((h.end - h.start) / 1000)}\n`);
   }
   if (res.file) { h.file = res.file; h.size = res.size; }
+  logRun(h);
   const finalLog = h.log.length > 24000 ? '…\n' + h.log.slice(-24000) : h.log;
   h.log = finalLog;
   save();
@@ -266,9 +331,10 @@ async function runJob({ pid, kind, refId, title, spec, silent }) {
     if (st && (V.runId === id)) st.innerHTML = runChip(h);
     if (stop && V.runId === id) stop.remove();
   }
-  if (!silent) toast(`${title}: ${h.status === 'ok' ? 'success' : 'failed'}`, h.status !== 'ok');
+  if (!silent) toast(`${title}: ${h.status === 'ok' ? 'success' : h.status === 'killed' ? 'stopped' : 'failed'}`, h.status !== 'ok' && h.status !== 'killed');
   if (kind === 'backup') { const p = proj(pid), b = p && p.backups.find(x => x.id === refId); if (b) await loadBackups(b); }
   if (kind === 'deploy' && h.status === 'ok') postDeployHealth(pid, refId, id, h);
+  petEvent('job', { kind, status: h.status, title, auto: !!auto });
   softRender();
   return h;
 }
@@ -285,13 +351,28 @@ async function postDeployHealth(pid, did, runId, h) {
   if (!r.ok) toast(`Warning: ${e.name || e.url} is not responding after the deploy`, true);
   softRender();
 }
+/** Opens the app's URL in the browser as soon as it answers (any HTTP status); gives up after 3 minutes or when the app stops */
+async function openWhenReady(p) {
+  const url = p.run.url;
+  for (let i = 0; i < 90; i++) {
+    await sleep(2000);
+    if (!isRunning(p.id)) return;
+    const r = await native.net.check({ url, method: 'GET', headers: '', expect: '', keyword: '', projectId: p.id });
+    if (r && r.status) {
+      const o = await native.shell.openUrl(url);
+      if (o && o.error) toast(o.error, true);
+      return;
+    }
+  }
+  if (isRunning(p.id)) toast(`${p.name}: ${url} did not respond within 3 minutes`, true);
+}
 function deploySpec(p, d) {
-  return { command: d.command, shell: d.shell, cwd: d.cwd || p.repoPath || '', envSpec: d.envSpec || '' };
+  return { command: d.command, shell: d.shell, cwd: d.cwd || p.repoPath || '', envSpec: d.envSpec || '', dbId: d.dbId || '' };
 }
 function backupSpec(p, b) {
-  return { cwd: b.cwd || p.repoPath || '', envSpec: b.envSpec || '', backup: { name: b.name, type: b.type, source: b.source, destDir: b.destDir, command: b.command, shell: b.shell, exclude: b.exclude, keep: b.keep } };
+  return { cwd: b.cwd || p.repoPath || '', envSpec: b.envSpec || '', dbId: b.dbId || '', backup: { name: b.name, type: b.type, source: b.source, destDir: b.destDir, command: b.command, shell: b.shell, exclude: b.exclude, keep: b.keep } };
 }
-const runBackup = (p, b, silent) => runJob({ pid: p.id, kind: 'backup', refId: b.id, title: `Backup: ${b.name}`, spec: backupSpec(p, b), silent });
+const runBackup = (p, b, silent, auto) => runJob({ pid: p.id, kind: 'backup', refId: b.id, title: `Backup: ${b.name}`, spec: backupSpec(p, b), silent, auto });
 
 /** Pre-deploy checks: branch, uncommitted changes, unpushed commits, CI status */
 async function deployClick(pid, did) {
@@ -368,8 +449,6 @@ async function saveProject(form) {
   const data = {
     name,
     repoPath: String(fd.get('repoPath')).trim(), priority: Number(fd.get('priority')),
-    envs: readRows(form, '.envrow', ['name', 'url', 'checkUrl', 'method', 'expect', 'keyword', 'headers']).filter(e => e.name || e.url),
-    ci: { repo: String(fd.get('ciRepo')).trim(), tokenId: String(fd.get('ciToken')) },
   };
   let p;
   if (id) { p = proj(id); Object.assign(p, data); }
@@ -383,11 +462,24 @@ async function saveProject(form) {
   if (!id) openProject(p.id); else { render(); enterTab(); }
   toast('Saved');
 }
+/** The Settings tab: run, build, websites and CI each have their own form */
+function saveProjSettings(form) {
+  const p = proj(form.dataset.pid), fd = new FormData(form), v = n => String(fd.get(n) ?? '').trim();
+  if (form.id === 'runForm') p.run = { command: v('command'), url: v('url'), shell: v('shell'), envSpec: v('envSpec'), dbId: v('dbId') };
+  else if (form.id === 'buildForm') p.build = { command: v('command'), shell: v('shell'), envSpec: v('envSpec'), dbId: v('dbId') };
+  else if (form.id === 'envForm') {
+    form.querySelectorAll('.envrow').forEach(r => { if (!r.dataset.id) r.dataset.id = uid(); }); // keep ids stable if this form is not re-rendered
+    p.envs = readRows(form, '.envrow', ['name', 'url', 'checkUrl', 'method', 'expect', 'keyword', 'headers']).filter(e => e.name || e.url);
+  } else if (form.id === 'ciForm') p.ci = { repo: v('repo'), tokenId: v('token') };
+  save(); delete form.dataset.dirty;
+  if (!$('#main form.setf[data-dirty]')) render(); // a card with unsaved edits is never rebuilt under the user
+  enterTab(); toast('Saved');
+}
 function saveDeploy(form) {
   const fd = new FormData(form), p = proj(form.dataset.pid), did = form.dataset.id;
   const name = String(fd.get('name')).trim(), command = String(fd.get('command')).trim();
   if (!name || !command) return;
-  const data = { name, command, envId: fd.get('envId'), shell: fd.get('shell'), cwd: String(fd.get('cwd')).trim(), branch: String(fd.get('branch')).trim(), envSpec: String(fd.get('envSpec')).trim(), noHealth: !fd.get('health') };
+  const data = { name, command, envId: fd.get('envId'), shell: fd.get('shell'), cwd: String(fd.get('cwd')).trim(), branch: String(fd.get('branch')).trim(), envSpec: String(fd.get('envSpec') ?? '').trim(), dbId: String(fd.get('dbId') || ''), noHealth: !fd.get('health') };
   if (did) Object.assign(p.deploys.find(x => x.id === did), data); else p.deploys.push({ id: uid(), ...data });
   save(); closeModal(); render(); toast('Saved');
 }
@@ -398,7 +490,7 @@ function saveBackup(form) {
   const data = {
     name, type: fd.get('type'), source: String(fd.get('source')).trim(), destDir, command: String(fd.get('command')).trim(),
     shell: fd.get('shell'), cwd: String(fd.get('cwd')).trim(), exclude: String(fd.get('exclude')).trim(),
-    keep: Math.max(0, Math.round(Number(fd.get('keep')) || 0)), everyHours: Math.max(0, Number(fd.get('everyHours')) || 0), envSpec: String(fd.get('envSpec')).trim(),
+    keep: Math.max(0, Math.round(Number(fd.get('keep')) || 0)), everyHours: Math.max(0, Number(fd.get('everyHours')) || 0), envSpec: String(fd.get('envSpec') ?? '').trim(), dbId: String(fd.get('dbId') || ''),
   };
   if (data.type === 'folder' && !data.source) return toast('Set the source folder', true);
   if (data.type === 'command' && !data.command) return toast('Enter the backup command', true);
@@ -412,18 +504,23 @@ async function saveVault(form) {
   if (!label) return;
   const secret = String(fd.get('secret'));
   if (!id && !secret) return toast('Enter the secret value', true);
-  const entry = { id, label, kind: fd.get('kind'), projectId: fd.get('projectId'), username: String(fd.get('username')).trim(), url: String(fd.get('url')).trim(), notes: String(fd.get('notes')).trim(), expires: readDate(form, 'expires') };
+  const envName = String(fd.get('envName') || '').trim();
+  if (envName && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(envName)) return toast('The variable name may only contain letters, digits and _', true);
+  const entry = { id, label, kind: fd.get('kind'), projectId: fd.get('projectId'), username: String(fd.get('username')).trim(), url: String(fd.get('url')).trim(), expires: (VAULT_FIELDS[fd.get('kind')] || {}).exp ? readDate(form, 'expires') : '', envName };
   const r = await native.vault.save(entry, secret);
   if (r.error) return toast(r.error, true);
   closeModal(); await loadVault(); render(); toast('Saved to the vault');
 }
 
 /* ======================= Events ======================= */
+const markDirty = el => { const f = el.closest && el.closest('form.setf'); if (f) f.dataset.dirty = '1'; };
+document.addEventListener('input', e => markDirty(e.target));
+document.addEventListener('change', e => markDirty(e.target));
 const actions = {
   close: closeModal,
   go: el => { go(el.dataset.to); if (el.dataset.to === 'vault') loadVault().then(softRender); },
   'open-project': el => openProject(el.dataset.id, el.dataset.tab || 'tasks'),
-  'set-tab': el => { V.tab = el.dataset.tab; render(); enterTab(); },
+  'set-tab': el => { V.tab = el.dataset.tab; navPush(); render(); enterTab(); },
   'new-project': () => projectModal(),
   'edit-project': el => projectModal(el.dataset.id),
   'del-project': async el => {
@@ -433,6 +530,8 @@ const actions = {
     await native.vault.removeByProject(p.id);
     S.projects = S.projects.filter(x => x.id !== p.id);
     S.history = S.history.filter(h => h.projectId !== p.id);
+    S.runlog = S.runlog.filter(r => r.pid !== p.id);
+    S.archive = S.archive.filter(a => a.pid !== p.id);
     save(); closeModal(); await loadVault(); go('dashboard');
   },
   'refresh-all': () => refreshAll(true),
@@ -443,8 +542,8 @@ const actions = {
     const p = await native.shell.pickFolder();
     if (p) el.closest('form').querySelector(`[name=${el.dataset.target}]`).value = p;
   },
-  'row-add': el => el.previousElementSibling.insertAdjacentHTML('beforeend', envRow({}, '')),
-  'row-del': el => el.closest('.envrow').remove(),
+  'row-add': el => { el.previousElementSibling.insertAdjacentHTML('beforeend', envRow({}, '')); markDirty(el); },
+  'row-del': el => { markDirty(el); el.closest('.envrow').remove(); },
   'date-clear': el => el.closest('.datef').querySelectorAll('select').forEach(s => { s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); }),
   'env-check': async el => {
     const p = proj(V.pid), e = p.envs.find(x => x.id === el.dataset.id);
@@ -538,6 +637,24 @@ const actions = {
 
   /* Jobs and history */
   'job-kill': async el => { await native.job.kill(el.dataset.id); },
+  'app-run': () => {
+    const p = proj(V.pid);
+    if (!p.run.command) { toast('Set the run command first', true); return actions['set-tab']({ dataset: { tab: 'settings' } }); }
+    runJob({ pid: p.id, kind: 'run', refId: p.id, title: `Run: ${p.name}`, spec: { command: p.run.command, shell: p.run.shell, cwd: p.repoPath || '', envSpec: p.run.envSpec, dbId: p.run.dbId } });
+    softRender();
+    const closeRun = onModalClose;
+    onModalClose = () => { if (closeRun) closeRun(); render(); };
+    if (p.run.url) openWhenReady(p);
+  },
+  'app-build': () => {
+    const p = proj(V.pid);
+    if (!p.build.command) { toast('Set the build command first', true); return actions['set-tab']({ dataset: { tab: 'settings' } }); }
+    runJob({ pid: p.id, kind: 'build', refId: p.id + ':build', title: `Build: ${p.name}`, spec: { command: p.build.command, shell: p.build.shell, cwd: p.repoPath || '', envSpec: p.build.envSpec, dbId: p.build.dbId } });
+    const closeRun = onModalClose;
+    onModalClose = () => { if (closeRun) closeRun(); render(); };
+  },
+  'app-stop': async () => { const r = Object.values(RUN).find(x => x.h.refId === V.pid); if (r) await native.job.kill(r.h.id); },
+  'app-log': () => { const r = Object.values(RUN).find(x => x.h.refId === V.pid); if (r) openRunModal(r.h.id); },
   'bell': () => { V.bell = !V.bell; renderTopbar(); },
   'run-open': () => { const id = Object.keys(RUN)[0]; if (id) openRunModal(id); },
   'log-open': el => openRunModal(el.dataset.id, true),
@@ -568,6 +685,7 @@ const actions = {
     if (r) r.error ? toast(r.error, true) : toast(`Copied; it will be cleared from the clipboard in ${num(r.clearAfter)} seconds`);
   },
   'v-gen': el => { const i = el.closest('form').querySelector('[name=secret]'); i.value = genPassword(); i.type = 'text'; },
+  'v-tpl': el => { const i = el.closest('form').querySelector('[name=secret]'); i.value = DB_TEMPLATES[el.dataset.i].cs; i.type = 'text'; },
   'v-toggle': el => { const i = el.closest('form').querySelector('[name=secret]'); i.type = i.type === 'password' ? 'text' : 'password'; },
   'lock-now': () => lockNow(),
   'pw-change': () => pwModal(),
@@ -596,11 +714,14 @@ document.addEventListener('click', e => {
   // the alert panel closes when clicking anywhere else (or on an alert)
   if (wasOpen && V.bell && !(el && el.dataset.action === 'bell')) { V.bell = false; renderTopbar(); }
 });
-document.addEventListener('mousedown', e => { if (e.target.id === 'modal') closeModal(); });
+document.addEventListener('mousedown', e => { if (e.target.id === 'modal') closeModal(); if (e.button === 3 || e.button === 4) e.preventDefault(); });
+document.addEventListener('mouseup', e => { if (e.button === 3 || e.button === 4) { e.preventDefault(); navMove(e.button === 3 ? -1 : 1); } });
+document.addEventListener('keydown', e => { if (e.altKey && !e.ctrlKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) { e.preventDefault(); navMove(e.key === 'ArrowLeft' ? -1 : 1); } });
 document.addEventListener('submit', async e => {
   e.preventDefault();
   const f = e.target;
   if (f.id === 'projForm') saveProject(f);
+  else if (f.classList.contains('setf')) saveProjSettings(f);
   else if (f.id === 'deployForm') saveDeploy(f);
   else if (f.id === 'backupForm') saveBackup(f);
   else if (f.id === 'vaultForm') saveVault(f);
@@ -622,11 +743,24 @@ document.addEventListener('submit', async e => {
     if (!r.error && push) gitOp(V.pid, 'pushTag', { name }, `Push tag ${name}`);
   }
 });
+/** Appends NAME=@label for the chosen vault item to the environment-variables box next to the picker */
+function pickVaultItem(sel) {
+  const v = C.vault.find(x => x.id === sel.value), ta = sel.closest('.field').querySelector('textarea[name=envSpec]');
+  if (v && ta) {
+    const name = v.envName || (v.kind === 'db' ? 'ConnectionStrings__Default' : v.label.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^(\d)/, '_$1'));
+    ta.value = (ta.value.trim() ? ta.value.replace(/\s*$/, '\n') : '') + `${name}=@${v.label}`;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  sel.selectedIndex = 0;
+  ddSync(sel);
+}
 document.addEventListener('change', e => {
   if (e.target.name === 'type' && e.target.closest('#backupForm')) syncBackupType();
+  if (e.target.name === 'kind' && e.target.closest('#vaultForm')) syncVaultKind();
+  if (e.target.classList.contains('vpick')) pickVaultItem(e.target);
   if (e.target.dataset.setting === 'autoLockMin') { S.settings.autoLockMin = Number(e.target.value); save(); }
-  if (e.target.dataset.setting === 'dailyAt' || e.target.dataset.setting === 'nagMin') { S.settings[e.target.dataset.setting] = e.target.dataset.setting === 'nagMin' ? Number(e.target.value) : e.target.value; save(); }
   if (e.target.dataset.setting === 'notifyOn') { S.settings.notifyOn = e.target.checked; save(); }
+  if (e.target.dataset.setting === 'wip') { S.settings.wip = Number(e.target.value) || 0; save(); renderTopbar(); syncAlerts(); }
   if (e.target.dataset.pref) native.app.setPrefs({ [e.target.dataset.pref]: e.target.checked });
   if (e.target.dataset.setting === 'healthMin') { S.settings.healthMin = Number(e.target.value); save(); startHealthTimer(); }
   if (e.target.dataset.hf) { V[e.target.dataset.hf] = e.target.value; render(); }
@@ -661,7 +795,7 @@ function scheduleTick() {
     for (const b of p.backups) {
       if (!(b.everyHours > 0) || isRunning(b.id)) continue;
       const last = S.history.find(h => h.refId === b.id && h.status !== 'running');
-      if (!last || Date.now() - last.start >= b.everyHours * 3600e3) runBackup(p, b, true);
+      if (!last || Date.now() - last.start >= b.everyHours * 3600e3) runBackup(p, b, true, true);
     }
   }
 }
@@ -679,27 +813,12 @@ function syncAlerts(first) {
   const fresh = bad.filter(a => !seenAlerts.has(a.pid + '|' + a.text));
   for (const k of [...seenAlerts]) if (!keys.has(k)) seenAlerts.delete(k);
   keys.forEach(k => seenAlerts.add(k));
+  petEvent('alerts', { bad: bad.length, warn: A.length - bad.length, fresh });
   if (!fresh.length || !S.settings.notifyOn) return;
   if (first && S.settings.notified === todayISO()) return; // after the app opens, do not repeat today's earlier alerts
   if (first) { S.settings.notified = todayISO(); save(); }
   const nav = fresh[0].pid ? { pid: fresh[0].pid, tab: fresh[0].tab } : {};
   pushNote(fresh.length > 1 ? `${num(fresh.length)} critical alerts` : 'Critical alert', fresh.length > 1 ? fresh.slice(0, 3).map(a => `${a.name}: ${a.text}`).join('\n') : `${fresh[0].name} — ${fresh[0].text}`, nav);
-}
-
-/** Reminder for daily routines: from the configured time, repeating at an interval until done */
-let lastNag = 0;
-function reminderTick() {
-  if (!S || !S.settings.notifyOn || !/^\d\d:\d\d$/.test(S.settings.dailyAt || '')) return;
-  const now = new Date(), [hh, mm] = S.settings.dailyAt.split(':').map(Number);
-  if (now.getHours() * 60 + now.getMinutes() < hh * 60 + mm) return;
-  const todo = S.projects.flatMap(p => p.ops.filter(o => !opDoneToday(o)).map(o => ({ p, o })));
-  if (!todo.length) return;
-  const nag = Number(S.settings.nagMin) || 0, sinceLast = Date.now() - lastNag;
-  if (S.settings.dailyNotified === todayISO() && (!nag || sinceLast < nag * 60000)) return;
-  S.settings.dailyNotified = todayISO(); save(); lastNag = Date.now();
-  const lines = [];
-  if (todo.length) lines.push(`${num(todo.length)} daily routines not done today: ${todo.slice(0, 3).map(x => x.o.name).join(', ')}`);
-  pushNote('ProdKeeper reminder', lines.join('\n'), todo.length === 1 ? { pid: todo[0].p.id, tab: 'daily' } : {});
 }
 
 native.app.onNavigate(n => {
@@ -731,27 +850,30 @@ function lockScreen(st) {
     const el = $('#lock'), host = $('#lockHost'), setup = st.state === 'setup';
     el.hidden = false;
     host.innerHTML = `<form id="lockScreenForm" class="lockbox">
-      <div class="lockmark">${LOGO}</div>
       <h2>${setup ? 'Create master password' : 'Unlock'}</h2>
       ${setup ? `<p class="sub">This password is the encryption key (AES-256) for all your data and is stored nowhere. <b>If you forget it there is no way to recover it.</b> At least 8 characters; a long passphrase is better.</p>
         ${st.legacy ? '<p class="sub" style="color:var(--ok)">Your previous data was found; it will be encrypted after you create a password and the plaintext copy will be deleted.</p>' : ''}` : '<p class="sub">Your data is encrypted; enter the master password to continue.</p>'}
       <input type="password" name="pw" placeholder="Master password" autocomplete="off">
       ${setup ? '<input type="password" name="pw2" placeholder="Repeat password" autocomplete="off">' : ''}
-      <div class="err" id="lockErr">${st.waitSec ? `Too many failed attempts; wait ${num(st.waitSec)} seconds` : ''}</div>
+      <div class="err" id="lockErr"></div>
       <button class="btn primary" style="justify-content:center">${setup ? 'Create password and sign in' : 'Unlock'}</button></form>`;
     const f = $('#lockScreenForm');
     f.elements.pw.focus();
     const finish = () => { el.hidden = true; host.innerHTML = ''; resolve(); };
+    // the pet says the messages; if it is turned off they are shown as text under the form, as before
+    const say = (text, kind) => { $('#lockErr').textContent = petLockSay(text, kind) ? '' : text; };
+    if (st.waitSec) say(`Too many failed attempts; wait ${num(st.waitSec)} seconds`, 'err');
+    else say(setup ? 'hi! create a master password for me to guard. if you forget it, nobody can recover it.' : 'welcome back. enter your master password.', 'info');
     f.onsubmit = async e => {
       e.preventDefault();
-      const err = $('#lockErr'), pw = f.elements.pw.value;
+      const pw = f.elements.pw.value;
       if (setup) {
-        if (pw.length < 8) { err.textContent = 'The password must be at least 8 characters'; return; }
-        if (pw !== f.elements.pw2.value) { err.textContent = 'The passwords do not match'; return; }
+        if (pw.length < 8) { say('The password must be at least 8 characters', 'err'); return; }
+        if (pw !== f.elements.pw2.value) { say('The passwords do not match', 'err'); return; }
       }
-      err.textContent = 'Checking…';
+      say('Checking…', 'info');
       const r = setup ? await native.sec.setup(pw) : await native.sec.unlock(pw);
-      if (r.error) { err.textContent = r.error; f.elements.pw.select(); return; }
+      if (r.error) { say(r.error, 'err'); f.elements.pw.select(); return; }
       finish();
     };
   });
@@ -794,15 +916,15 @@ async function init() {
     await askConfirm('The data file is corrupt or has been tampered with. For now the app will not write anything to it; you can use "Restore from file" in Settings or the daily copies in the backups folder.', 'Got it', false);
   } else S = normalize(ld && ld.data);
   S.history.forEach(h => { if (h.status === 'running') { h.status = 'interrupted'; h.end = h.end || h.start; } });
+  syncRunlog();
   applyTheme();
   await loadVault();
   render();
   pushPopup();
+  petInit();
   await refreshAll();
   startHealthTimer();
   syncAlerts(true);
-  setInterval(reminderTick, 60000);
-  setTimeout(reminderTick, 5000);
   setTimeout(scheduleTick, 20000);
   setInterval(scheduleTick, 60000);
   setInterval(() => {

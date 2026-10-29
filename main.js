@@ -42,7 +42,8 @@ function applyAutoStart() {
 function createWindow() {
   win = new BrowserWindow({
     width: 1360, height: 840, minWidth: 1000, minHeight: 620,
-    title: 'ProdKeeper', icon: asset('icon.png'), backgroundColor: nativeTheme.shouldUseDarkColors ? THEME_BG.dark : THEME_BG.light, show: !startHidden,
+    // the .ico has an exact image for every size; a PNG would be scaled down by Windows for the taskbar
+    title: 'ProdKeeper', icon: asset('icon.ico'), backgroundColor: nativeTheme.shouldUseDarkColors ? THEME_BG.dark : THEME_BG.light, show: !startHidden,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   Menu.setApplicationMenu(null);
@@ -51,6 +52,11 @@ function createWindow() {
   win.webContents.on('will-navigate', e => e.preventDefault());
   // a hidden renderer must still run the monitoring timers without throttling
   win.webContents.setBackgroundThrottling(false);
+  // After hours in the background the page can die (crash / out of memory) and leaves a blank white window: log it and load it again
+  win.webContents.on('render-process-gone', (_e, d) => {
+    logCrash(`main window renderer gone: ${d.reason} (exit ${d.exitCode})`);
+    if (d.reason !== 'clean-exit' && win && !win.isDestroyed()) setTimeout(() => { if (win && !win.isDestroyed()) win.webContents.reload(); }, 500);
+  });
   win.on('closed', () => { if (popupWin && !popupWin.isDestroyed()) popupWin.destroy(); });
   win.on('close', e => {
     if (quitting || !prefs.keepRunning) return;
@@ -64,10 +70,30 @@ function createWindow() {
   }
 }
 
+function logCrash(msg) {
+  try { fs.appendFileSync(path.join(app.getPath('userData'), 'crash.log'), `${new Date().toISOString()} ${msg}\n`, 'utf8'); } catch { /* read-only */ }
+}
+/** A page that is blank or no longer answers when the window is shown is reloaded (a hung one is killed first; the crash handler reloads it) */
+async function ensurePageAlive() {
+  if (!win || win.isDestroyed()) return;
+  const wc = win.webContents;
+  let ok = false;
+  try {
+    ok = await Promise.race([
+      wc.executeJavaScript('!!document.getElementById("main") && document.body.children.length > 0'),
+      new Promise(r => setTimeout(() => r(null), 5000)),
+    ]);
+  } catch { ok = false; }
+  if (!win || win.isDestroyed()) return;
+  if (ok === null) { logCrash('main window renderer did not answer when shown: restarted'); wc.forcefullyCrashRenderer(); }
+  else if (!ok) { logCrash('main window was blank when shown: reloaded'); wc.reload(); }
+  else wc.invalidate();
+}
 function showWin(nav) {
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
   win.show(); win.focus();
+  ensurePageAlive();
   if (nav) win.webContents.send('app:navigate', nav);
 }
 /* Task popup: a small always-on-top window above the tray icon. It stays put (no hide on blur) until it is closed with
@@ -134,7 +160,8 @@ function createTray() {
 
 app.on('second-instance', () => showWin());
 app.on('web-contents-created', (_e, wc) => wc.on('will-attach-webview', e => e.preventDefault()));
-app.on('before-quit', () => { quitting = true; vault.clearClipboard(); secure.lock(); });
+app.on('child-process-gone', (_e, d) => { if (d.type === 'GPU' || d.reason !== 'clean-exit') logCrash(`${d.type} process gone: ${d.reason} (exit ${d.exitCode})`); });
+app.on('before-quit', () => { quitting = true; jobs.killServers(); vault.clearClipboard(); secure.lock(); });
 app.on('will-quit', () => globalShortcut.unregisterAll());
 
 app.whenReady().then(() => {

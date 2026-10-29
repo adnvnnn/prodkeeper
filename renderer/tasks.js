@@ -14,7 +14,8 @@ const byPrio = (a, b) => b.priority - a.priority;
 const taskKey = (p, t) => `T-${t.num}`;
 const isNow = t => t.status === 'todo' || t.status === 'doing';
 const openTasks = p => p.tasks.filter(t => t.status !== 'done');
-const wipLimit = p => (p.wip === undefined ? T_WIP_DEFAULT : p.wip);
+/** The WIP limit is one app-wide setting (Settings > Tasks); 0 = off */
+const wipLimit = () => S.settings.wip;
 
 /** Finds a task (and its app) by id across all apps */
 function findTask(id) {
@@ -33,12 +34,19 @@ function makeTask(p, fields) {
 
 /** Change status; keeps the sprint link, done time and start time in step */
 function setTaskStatus(p, t, status) {
-  const sp = activeSprint(p);
+  const sp = activeSprint(p), was = t.status;
   t.status = status;
   t.doneAt = status === 'done' ? Date.now() : null;
   if (status === 'backlog') t.sprintId = '';
   else if (!t.sprintId && sp) t.sprintId = sp.id;
   if (status === 'doing' && !t.startedAt) t.startedAt = Date.now();
+  if (status === 'done' && was !== 'done') petEvent('task-done', { p, t });
+}
+
+/** Deleting a finished task must not erase it from the reports, so the facts the reports use are kept */
+function archiveTask(p, t) {
+  S.archive.push({ pid: p.id, app: p.name, t: { num: t.num, title: t.title, status: 'done', priority: t.priority, estimate: t.estimate || 0, createdAt: t.createdAt || 0, startedAt: t.startedAt || 0, doneAt: t.doneAt } });
+  if (S.archive.length > 5000) S.archive.splice(0, S.archive.length - 5000);
 }
 
 /* ---------- WIP limit ---------- */
@@ -116,7 +124,6 @@ function tabTasks(p) {
   const seg = (v, l) => `<button class="${view === v ? 'on' : ''}" data-action="tview" data-v="${v}">${l}</button>`;
   const head = `<div class="page-head" style="margin-top:0"><div class="seg">${seg('board', 'Board')}${seg('list', 'List')}${seg('sprints', 'Sprints')}</div>
       <span class="grow"></span>
-      ${view === 'board' ? `<label class="wip" title="Warn when more than this many tasks are in progress">WIP limit <select data-wip="${p.id}">${[0, 1, 2, 3, 4, 5, 6, 8].map(n => `<option value="${n}" ${n === wipLimit(p) ? 'selected' : ''}>${n ? n : 'Off'}</option>`).join('')}</select></label>` : ''}
       <button class="btn primary" data-action="task-new" data-pid="${p.id}">${I.plus}New task</button></div>`;
   if (view === 'sprints') return head + sprintsHtml(p);
   if (view === 'list') {
@@ -226,7 +233,8 @@ Object.assign(actions, {
   },
   'task-del': async el => {
     if (!(await askConfirm('Delete this task?'))) return;
-    const p = proj(el.dataset.pid);
+    const p = proj(el.dataset.pid), gone = p.tasks.find(x => x.id === el.dataset.id);
+    if (gone && gone.doneAt) archiveTask(p, gone);
     p.tasks = p.tasks.filter(x => x.id !== el.dataset.id);
     save(); closeModal(); render();
   },
@@ -247,7 +255,7 @@ Object.assign(actions, {
     save(); render(); loadTaskBranches(p).then(softRender);
   },
   tfilter: el => { V.tfilter = el.dataset.v; render(); },
-  tview: el => { V.tview = el.dataset.v; render(); if (el.dataset.v === 'board') enterTab(); },
+  tview: el => { V.tview = el.dataset.v; navPush(); render(); if (el.dataset.v === 'board') enterTab(); },
 });
 
 document.addEventListener('submit', e => {
@@ -287,14 +295,6 @@ document.addEventListener('keydown', e => {
   save(); render();
   const again = document.querySelector(`[data-tquick="${pid}"]`);
   if (again) again.focus();
-});
-
-document.addEventListener('change', e => {
-  if (e.target.dataset.wip === undefined) return;
-  const p = proj(e.target.dataset.wip);
-  if (!p) return;
-  p.wip = Number(e.target.value) || 0;
-  save(); render();
 });
 
 /* ---------- Tasks popup (small always-on-top window, Ctrl+Alt+T) ---------- */
