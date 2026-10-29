@@ -1,21 +1,18 @@
 'use strict';
 
 /* ======================= Pet =======================
- * One pixel-art cat (renderer/petsprite.js) that keeps watch over the app; it is also the app's icon.
+ * One robot (renderer/petart.js) that keeps watch over the app; it is also the app's icon.
  *  - You steer it with the arrow keys: Left / Right walk, Up jumps (twice for a double jump), Down drops through what it stands on.
  *    Everything on the page is solid ground from above: cards, buttons, headings and lines of text. It can go anywhere you can jump.
- *  - On the lock screen it stands on the unlock form; after the unlock it hops down and runs back to where it was.
- *  - It talks in a terminal-style bubble: normal messages are typed out, errors and warnings appear at once. It is sad while the app
- *    has critical alerts, and a failed job, a new alert or a finished task / deploy / backup / focus session makes it react.
- *  - Tricks (mouse or keys), feeding, a ball, "follow my cursor" and a focus timer are in its panel.
- * Everything it remembers lives in S.pet (encrypted with the rest of the data); the app never depends on it. */
-const PET_SIZE = 96, PET_PX = 5, PET_FLOOR = 4, PET_GRAV = 2200, PET_BALL = 28, PET_TYPE_MS = 26, PET_SPEED = 230;
-const PET_JOKES = [
-  'it works on my machine.', 'have you tried turning it off and on again?', 'git push --force? do not even think about it.',
-  'two hard things: cache invalidation, naming things and off-by-one errors.', 'deploying on a friday evening? brave.',
-  'backups are like parachutes. you want them before you need them.', 'commit early. commit often.',
-  'tabs or spaces? i am a cat. i only care about treats.',
-];
+ *    F, D, X and S make it do a backflip, dance, play dead and beep.
+ *  - It does not wander: a few seconds after you stop steering it, it climbs down and goes to the bottom-right corner and waits there.
+ *  - On the lock screen it stands on the unlock form and says the messages there; after the unlock it hops down and runs to its corner.
+ *  - It talks in a terminal-style bubble: normal messages are typed out, errors and warnings appear at once. Its antenna LED blinks red
+ *    while the app has critical alerts, and a finished task / deploy / backup, a failed job or a new alert makes it say so
+ *    (click a message about an app to open that app).
+ *  - It has no settings. Right-click it to hide it; it comes back from Settings or the Ctrl+K palette.
+ * What it remembers (S.pet: shown or hidden) lives in the encrypted data; the app never depends on it. */
+const PET_SIZE = 96, PET_FLOOR = 4, PET_GRAV = 2200, PET_TYPE_MS = 26, PET_SPEED = 230, PET_PARK_MS = 4000, PET_CORNER = 14;
 /* everything the pet can stand on (from above): text, controls and boxes */
 const PET_SOLID = 'h1,h2,h3,h4,p,li,label,td,th,button,a,input,select,textarea,code,pre,summary,img,.card,.chip,.btn,.sub,.dd,.dialog,.pitem,.palette';
 
@@ -23,85 +20,73 @@ const petRand = (a, b) => a + Math.random() * (b - a);
 const petPick = arr => arr[Math.floor(Math.random() * arr.length)];
 const petClamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const petIcons = {};
-const petIcon = (name, px = 3) => petIcons[name + px] || (petIcons[name + px] = PetSprite.icon(name, px));
+const petIcon = (name, size = 3) => petIcons[name + size] || (petIcons[name + size] = PetArt.icon(name, size));
 
 /** Fills in missing fields of the saved pet (called when the data is loaded, so old data files just get a new pet) */
 function normPet(d) {
   d = d && typeof d === 'object' ? d : {};
-  const st = d.stats || {};
-  return {
-    on: d.on !== false, name: String(d.name || 'Pixel').slice(0, 16),
-    born: d.born || Date.now(), at: d.at || Date.now(),
-    x: Number.isFinite(d.x) ? d.x : -1,
-    focus: d.focus && d.focus.end ? { end: Number(d.focus.end), mins: Number(d.focus.mins) || 25 } : null,
-    stats: { pets: +st.pets || 0, fed: +st.fed || 0, tasks: +st.tasks || 0, jobs: +st.jobs || 0, focus: +st.focus || 0, balls: +st.balls || 0 },
-  };
+  return { on: d.on !== false, at: d.at || Date.now() };
 }
 
 /* ---------- State ---------- */
 const PET = {
   ready: false, live: false, lock: false, placed: false, relock: false, arrive: false, lockMsg: false,
-  el: null, fig: null, bub: null, badge: null, fxBox: null, mirror: null, mirrorJson: '', spot: null,
-  x: 100, lift: 0, vx: 0, vy: 0, dir: 1, mode: 'idle', trick: '', until: 0, wx: null, nextWander: 0, run: false,
+  el: null, fig: null, bub: null, fxBox: null, menu: null, mirror: null, mirrorJson: '', spot: null,
+  x: 100, lift: 0, vx: 0, vy: 0, dir: 1, mode: 'idle', trick: '', until: 0, wx: null, manualAt: 0, run: false,
   keys: {}, jumps: 0, stand: null, dropEl: null, dropUntil: 0, plats: [], platsAt: 0,
-  follow: 0, napUntil: 0, sleepAuto: false, food: null, ball: null, grab: null, last: 0,
-  bubUntil: 0, bubNav: null, bubW: 0, bubH: 0, typing: null, bubDone: null, bubRest: null,
-  talkUntil: 0, joyUntil: 0, blinkAt: 0, blinkUntil: 0, frame: '', nextChat: 0, lastSay: '', kickAt: 0,
-  clicks: [], bad: 0, sleepFx: 0, panel: false, saveT: 0,
+  napUntil: 0, last: 0, bubUntil: 0, bubNav: null, bubW: 0, bubH: 0, typing: null, bubDone: null, bubRest: null,
+  talkUntil: 0, joyUntil: 0, blinkAt: 0, blinkUntil: 0, frame: '', nextChat: 0, lastSay: '', bad: 0, sleepFx: 0, saveT: 0,
 };
 const PETM = { x: 0, y: 0 };
 const petFloorY = () => innerHeight - PET_FLOOR;
 const petTopY = () => innerHeight - PET_FLOOR - PET_SIZE;
-/** True while the lock screen is up (or the data is not loaded yet): the pet then stands on the lock form and only uses its saved look */
+/** Where it waits: the bottom-right corner of the window */
+const petCornerX = () => Math.max(4, innerWidth - PET_SIZE - PET_CORNER);
+/** True while the lock screen is up (or the data is not loaded yet): the pet then stands on the lock form */
 const petLockMode = () => !PET.live || !S || (typeof locking !== 'undefined' && locking) || !$('#lock').hidden;
 /** The pet can react to the app only when the data is open; it never says anything about it on the lock screen */
 const petVisible = () => PET.ready && PET.live && S && S.pet.on && !petLockMode();
 const petMood = () => (PET.bad > 0 ? 'sad' : 'happy');
 const petSaveSoon = () => { clearTimeout(PET.saveT); PET.saveT = setTimeout(() => { if (S && !NOSAVE) save(); }, 3000); };
 
-/* The data is encrypted, so before the unlock the pet cannot read it. Its name and mood are mirrored in localStorage, like the theme,
- * so the lock screen can show the same pet. Nothing in it is sensitive. */
+/* The data is encrypted, so before the unlock the pet cannot read it. Whether it is shown and its mood are mirrored in localStorage,
+ * like the theme, so the lock screen can show the same pet. Nothing in it is sensitive. */
 const PET_MIRROR_KEY = 'aw-pet';
 function petMirrorLoad() {
   let m = {};
   try { m = JSON.parse(localStorage.getItem(PET_MIRROR_KEY)) || {}; } catch { /* storage unavailable */ }
-  return { on: m.on !== false, name: String(m.name || 'Pixel').slice(0, 16), mood: m.mood === 'sad' ? 'sad' : 'happy' };
+  return { on: m.on !== false, mood: m.mood === 'sad' ? 'sad' : 'happy' };
 }
 function petMirrorSave() {
-  const P = S.pet, m = { on: P.on, name: P.name, mood: petMood() }, j = JSON.stringify(m);
+  const m = { on: S.pet.on, mood: petMood() }, j = JSON.stringify(m);
   PET.mirror = m;
   if (j === PET.mirrorJson) return;
   PET.mirrorJson = j;
   try { localStorage.setItem(PET_MIRROR_KEY, j); } catch { /* storage unavailable */ }
 }
-/** Forces the sprite to be drawn again on the next frame (focus glasses changed) */
-function petRedraw() { PET.frame = ''; }
 
 /* ---------- Drawing: the sprite is rebuilt only when its pose changes ---------- */
 function petPose(now, lockMode, talking) {
-  const mood = lockMode ? PET.mirror.mood : petMood(), own = !lockMode && S.pet;
+  const mood = lockMode ? PET.mirror.mood : petMood();
   if (now > PET.blinkAt) { PET.blinkAt = now + petRand(2500, 6000); PET.blinkUntil = now + 140; }
   let eyes = 'open';
   if (PET.mode === 'sleep') eyes = 'closed';
   else if (PET.trick === 'dead') eyes = 'x';
   else if (now < PET.joyUntil) eyes = 'happy';
   else if (now < PET.blinkUntil) eyes = 'closed';
-  let mouth = mood === 'sad' ? 'sad' : 'smile';
-  if (talking) mouth = 'open';
-  if (PET.mode === 'eat') mouth = Math.floor(now / 160) % 2 ? 'open' : 'smile';
-  const dx = PETM.x - (PET.x + PET_SIZE / 2), sgn = PET.dir > 0 ? -1 : 1; // the sprite is mirrored when it faces right
-  const look = PET.mode === 'sleep' ? 0 : Math.abs(dx) < 90 ? 0 : (dx > 0 ? 1 : -1) * sgn;
+  const dx = PETM.x - (PET.x + PET_SIZE / 2);
   return {
-    eyes, mouth, look, glasses: !!(own && own.focus),
-    step: PET.mode === 'walk' ? 1 + (Math.floor(now / (PET.run ? 110 : 170)) % 2) : PET.mode === 'air' ? 2 : 0,
-    tail: PET.mode === 'sleep' || mood === 'sad' ? 0 : Math.floor(now / 420) % 2,
+    eyes, mouth: talking ? 'open' : mood === 'sad' ? 'sad' : 'smile',
+    look: PET.mode === 'sleep' || Math.abs(dx) < 90 ? 0 : dx > 0 ? 1 : -1,
+    step: PET.mode === 'walk' ? 1 + (Math.floor(now / (PET.run ? 150 : 230)) % 2) : PET.mode === 'air' ? 3 : 0,
+    led: PET.mode === 'sleep' ? 'off' : mood === 'sad' ? (Math.floor(now / 450) % 2 ? 'red' : 'off') : Math.floor(now / 1200) % 2 ? 'on' : 'off', // antenna: blinks red on alerts
   };
 }
 function petDraw(pose) {
   const key = Object.values(pose).join('|');
   if (key === PET.frame) return;
   PET.frame = key;
-  PET.fig.innerHTML = PetSprite.svg(PetSprite.cat(pose), PET_PX);
+  PET.fig.innerHTML = PetArt.pet(pose);
 }
 
 function petSetMode(mode, trick = '', ms = 0) {
@@ -179,7 +164,8 @@ function petCelebrate(text, kind = 'ok') {
   if (!petVisible()) return;
   if (PET.mode === 'sleep') petWake();
   petConfetti();
-  if (!['air', 'eat'].includes(PET.mode)) petJump(560);
+  PET.joyUntil = Date.now() + 1500;
+  if (PET.mode !== 'air') petJump(560);
   petSay(text, { kind });
 }
 function petJump(v = 660) {
@@ -191,15 +177,12 @@ function petJump(v = 660) {
 function petWake(text) {
   if (PET.mode !== 'sleep') return;
   petSetMode('idle');
-  PET.napUntil = 0;
-  PET.nextWander = Date.now() + 2500;
   if (text) petSay(text);
 }
-function petSleep(manual) {
-  if (!petVisible() || ['air', 'eat', 'sleep'].includes(PET.mode)) return;
+/** It dozes off when you have been away for a while (sooner at night) and wakes as soon as you are back */
+function petSleep() {
+  if (!petVisible() || ['air', 'sleep'].includes(PET.mode)) return;
   petSetMode('sleep');
-  PET.sleepAuto = !manual;
-  PET.napUntil = manual ? Date.now() + 120000 : 0;
   PET.wx = null;
 }
 
@@ -208,18 +191,13 @@ const PET_JOB_KINDS = ['deploy', 'backup', 'build', 'dbupdate', 'publish'];
 function petEvent(type, d = {}) {
   if (!PET.live || !S || !S.pet) return;
   try {
-    const P = S.pet;
     if (type === 'task-done') {
       if (!d.t || d.t.petDone) return; // a task counts once, so moving it back and forth does not repeat the party
       d.t.petDone = 1;
-      P.stats.tasks++;
-      petSaveSoon();
       petCelebrate(petPick(['task done. nice one.', 'one less thing on the list.', 'task complete. good job.', 'done. what is next?']));
     } else if (type === 'job') {
       if (!PET_JOB_KINDS.includes(d.kind)) return;
       if (d.status === 'ok') {
-        P.stats.jobs++;
-        petSaveSoon();
         if (d.auto) return;
         petCelebrate(d.kind === 'deploy' ? 'deploy finished. shipped it.' : d.kind === 'backup' ? 'backup complete. your data is safe.' : 'job finished.');
       } else if (d.status === 'fail') {
@@ -247,78 +225,32 @@ function petEvent(type, d = {}) {
   } catch (e) { console.error('pet', e); }
 }
 
-/* ---------- Actions: feed, play, tricks, focus ---------- */
-function petFeed() {
-  if (PET.food) return toast('There is already food on the floor');
-  if (PET.mode === 'sleep') petWake();
-  const el = document.createElement('div');
-  el.className = 'pet-item pet-food';
-  el.innerHTML = petIcon('fish', 4);
-  document.body.appendChild(el);
-  PET.food = { el, x: petRand(60, innerWidth - 60), lift: innerHeight - 150, vy: 0 };
-}
-function petFinishEat() {
-  if (PET.food) { PET.food.el.remove(); PET.food = null; }
-  S.pet.stats.fed++;
-  petFx(['heart', 'crumb'], 4);
-  petSay(petPick(['yum.', 'delicious.', 'more please?', 'nom nom nom.']));
-  petSaveSoon();
-}
-function petBall() {
-  if (PET.ball) { PET.ball.el.remove(); PET.ball = null; return; }
-  if (PET.mode === 'sleep') petWake();
-  const el = document.createElement('div');
-  el.className = 'pet-item pet-ball';
-  el.innerHTML = petIcon('ball', 4);
-  document.body.appendChild(el);
-  PET.ball = { el, x: petRand(80, innerWidth - 80), lift: innerHeight - 160, vx: petRand(-200, 200), vy: 0, touched: Date.now() };
-}
-function petFollow() {
-  PET.follow = PET.follow > Date.now() ? 0 : Date.now() + 90000;
-  if (PET.follow && PET.mode === 'sleep') petWake();
-  if (PET.follow) petSay('catch me if you can.');
-}
-/** Tricks: from the panel buttons and from the keys (F, D, X, S; Up is the jump) */
+/** Tricks, from the keys: Up jumps, F backflip, D dance, X play dead, S beep */
 function petDo(t) {
-  if (!petVisible() || ['air', 'eat'].includes(PET.mode)) return;
+  if (!petVisible() || PET.mode === 'air') return;
   if (PET.mode === 'sleep') petWake();
-  if (t === 'jump') petJump(860);
-  else if (t === 'flip') { PET.stand = null; PET.jumps = 1; petSetMode('air', 'flip'); PET.vy = 800; PET.vx = 0; }
+  if (t === 'flip') { PET.stand = null; PET.jumps = 1; petSetMode('air', 'flip'); PET.vy = 800; PET.vx = 0; }
   else if (t === 'dance') { petSetMode('trick', 'dance', 2800); petFx(['note', 'spark'], 8, 40); }
   else if (t === 'dead') { petSetMode('trick', 'dead', 2800); petFx(['star'], 3); }
-  else if (t === 'speak') { petSay('meow!', { ms: 1800 }); petFx(['note'], 2); }
+  else if (t === 'speak') { petSay('beep boop!', { ms: 1800 }); petFx(['note'], 2); }
 }
-function petStartFocus(mins) {
-  const P = S.pet;
-  P.focus = { end: Date.now() + mins * 60000, mins };
-  if (PET.mode === 'sleep') petWake();
-  PET.wx = null; PET.follow = 0;
-  petRedraw();
-  petSay(`focus mode on: ${mins} min. i will keep watch.`);
-  petSaveSoon(); petPanelRender();
-}
-function petEndFocus(done) {
-  const P = S.pet, f = P.focus;
-  if (!f) return;
-  P.focus = null;
-  if (PET.mode === 'work') petSetMode('idle');
-  petRedraw();
-  if (done) {
-    P.stats.focus++;
-    petCelebrate('focus session complete. take a break.');
-    try { pushNote('Focus session complete', `${f.mins} minutes done. Take a short break!`, {}); } catch { /* notifications unavailable */ }
-  }
-  petSaveSoon(); petPanelRender();
-}
+/** Shows or hides the pet (Settings, the Ctrl+K palette and its right-click menu all end up here) */
 function petShow(on) {
   S.pet.on = on;
-  if (on) { PET.nextChat = Date.now() + 8000; petClampX(); }
-  else { petHideBubble(); if (PET.food) { PET.food.el.remove(); PET.food = null; } if (PET.ball) { PET.ball.el.remove(); PET.ball = null; } }
-  petSaveSoon(); petPanelRender();
+  petMenuClose();
+  if (on) PET.nextChat = Date.now() + 8000; else petHideBubble();
+  petMirrorSave(); petSaveSoon();
+  const box = $('#petOn');
+  if (box) box.checked = on;
 }
 function petClampX() { PET.x = petClamp(PET.x, 4, Math.max(4, innerWidth - PET_SIZE - 4)); }
 
-/* ---------- Idle chatter: the pet says something about what is really going on ---------- */
+/* ---------- Idle chatter: it says something about what is really going on, and now and then a small health tip ---------- */
+const PET_TIPS = [
+  'drink some water.', 'a glass of water beats another coffee.', 'stretch your legs for a minute.', 'stand up and walk a little.',
+  'rest your eyes: look at something far away for 20 seconds.', 'sit up straight. shoulders down.', 'blink. breathe. continue.',
+  'take a short break. i will keep watch.', 'save your work. commit often.', 'check that your backups ran today.',
+];
 function petChatter() {
   const h = new Date().getHours(), opts = [];
   const A = computeAlerts();
@@ -329,16 +261,17 @@ function petChatter() {
   else if (todo) opts.push({ w: 2, t: 'nothing in progress. pick a task from your list?' });
   if (doneToday) opts.push({ w: 2, t: `${doneToday} task${doneToday > 1 ? 's' : ''} finished today. nice.`, kind: 'ok' });
   if (h >= 23 || h < 5) opts.push({ w: 3, t: 'it is late. your bugs will still be here tomorrow.' });
-  if (h >= 12 && h < 14) opts.push({ w: 1.5, t: 'lunch time?' });
-  opts.push({ w: 1, t: 'drink some water.' }, { w: 1, t: 'stretch your legs for a minute.' }, { w: 1, t: 'arrow keys: walk and jump. try it.' });
-  opts.push({ w: 1.5, t: petPick(PET_JOKES) });
+  if (h >= 12 && h < 14) opts.push({ w: 2, t: 'lunch time? eat something real.' });
+  if (h >= 6 && h < 10) opts.push({ w: 1.5, t: 'have you had breakfast?' });
+  for (const t of PET_TIPS) opts.push({ w: 0.6, t }); // together about as likely as an app message
+  opts.push({ w: 0.5, t: 'tip: arrows move me, up jumps. f, d, x and s are tricks.' });
   const pool = opts.filter(o => o.t !== PET.lastSay), total = pool.reduce((s, o) => s + o.w, 0);
   let r = Math.random() * total, ch = pool[0];
   for (const o of pool) { if ((r -= o.w) <= 0) { ch = o; break; } }
   if (ch) petSay(ch.t, { nav: ch.nav, kind: ch.kind });
 }
 
-/* ---------- Keyboard and mouse ---------- */
+/* ---------- Keyboard ---------- */
 const petTyping = t => t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable);
 function petKeyDown(e) {
   if (e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey || petTyping(e.target) || !petVisible()) return;
@@ -354,68 +287,34 @@ function petKeyDown(e) {
     }
   } else if (!e.repeat) {
     const t = { f: 'flip', d: 'dance', x: 'dead', s: 'speak' }[k.toLowerCase()];
-    if (t) petDo(t);
+    if (t) { PET.manualAt = Date.now(); petDo(t); }
   }
 }
 function petKeyUp(e) {
-  const k = e.key;
-  if (k.startsWith('Arrow')) PET.keys[k.slice(5).toLowerCase()] = false;
+  if (e.key.startsWith('Arrow')) PET.keys[e.key.slice(5).toLowerCase()] = false;
 }
-/** The player takes over: no more wandering, following or hurrying home */
+/** The player takes over: it stops heading for its corner, and goes there again PET_PARK_MS after the last key */
 function petManual() {
-  PET.follow = 0; PET.arrive = false; PET.wx = null;
-  PET.nextWander = Date.now() + 5000;
+  PET.arrive = false; PET.wx = null;
+  PET.manualAt = Date.now();
   if (PET.mode === 'sleep') petWake();
-  else if (PET.mode === 'trick' || PET.mode === 'eat') petSetMode('idle');
+  else if (PET.mode === 'trick') petSetMode('idle');
 }
 function petJumpKey() {
   if (PET.mode !== 'air') { PET.stand = null; PET.jumps = 1; PET.vy = 880; petSetMode('air'); }
   else if (PET.jumps < 2) { PET.jumps = 2; PET.vy = 820; petFx(['spark'], 2, 10); } // double jump
 }
 
-function petGrabBall(e) {
-  const b = PET.ball;
-  PET.grab = { sx: e.clientX, sy: e.clientY, ox: e.clientX - (b.x - PET_BALL / 2), oy: e.clientY - (innerHeight - PET_FLOOR - PET_BALL - b.lift), moved: false, s: [] };
+/* ---------- Right-click menu ---------- */
+function petMenuClose() { if (PET.menu) PET.menu.hidden = true; }
+function petMenuOpen(e) {
   e.preventDefault();
-}
-function petMouseMove(e) {
-  PETM.x = e.clientX; PETM.y = e.clientY;
-  const g = PET.grab;
-  if (!g) return;
-  if (!g.moved && Math.hypot(e.clientX - g.sx, e.clientY - g.sy) < 5) return;
-  const now = performance.now(), b = PET.ball;
-  g.moved = true; b.held = true;
-  g.s.push({ t: now, x: e.clientX, y: e.clientY });
-  while (g.s.length > 2 && now - g.s[0].t > 90) g.s.shift();
-  b.x = petClamp(e.clientX - g.ox + PET_BALL / 2, PET_BALL / 2, innerWidth - PET_BALL / 2);
-  b.lift = petClamp(innerHeight - PET_FLOOR - PET_BALL - (e.clientY - g.oy), 0, innerHeight - 110);
-  b.touched = Date.now();
-}
-function petMouseUp() {
-  const g = PET.grab;
-  if (!g) return;
-  PET.grab = null;
-  const b = PET.ball, a = g.s[0], z = g.s[g.s.length - 1];
-  if (!g.moved || !b) return;
-  b.held = false; b.vx = 0; b.vy = 0;
-  if (a && z && z.t > a.t) { const dt = (z.t - a.t) / 1000; b.vx = petClamp((z.x - a.x) / dt, -1600, 1600); b.vy = petClamp(-(z.y - a.y) / dt, -1600, 1600); }
-}
-/** Click on the pet: pet it. Two quick clicks: jump. */
-function petClicked() {
-  const now = Date.now();
-  if (petLockMode()) { PET.joyUntil = now + 1300; petFx(['heart'], 2); return; } // the data is locked: just a hello
-  const P = S.pet;
-  if (PET.mode === 'sleep') return petWake('huh?');
-  PET.clicks = PET.clicks.filter(t => now - t < 3000);
-  PET.clicks.push(now);
-  const n = PET.clicks.length;
-  if (n >= 2 && now - PET.clicks[n - 2] < 350 && PET.mode !== 'eat') petJump(700);
-  P.stats.pets++;
-  PET.joyUntil = now + 1300;
-  petFx(['heart'], 2);
-  if (n >= 8) { PET.clicks = []; petSay('ok ok, i love you too.'); petFx(['heart'], 6, 30); }
-  else if (P.stats.pets % 7 === 0) petSay(petPick(['*purr*', 'meow.', 'that feels nice.']), { ms: 1800 });
-  petSaveSoon();
+  if (petLockMode()) return;
+  const m = PET.menu;
+  m.innerHTML = '<button type="button" data-pet-hide>Hide the robot</button>';
+  m.hidden = false;
+  m.style.left = Math.round(petClamp(e.clientX - 12, 8, innerWidth - m.offsetWidth - 8)) + 'px';
+  m.style.top = Math.round(petClamp(e.clientY - m.offsetHeight - 10, 8, innerHeight - m.offsetHeight - 8)) + 'px';
 }
 
 /* ---------- The ground under its paws: every piece of text and box on the page ---------- */
@@ -423,18 +322,13 @@ function petPlatforms(force) {
   const now = performance.now();
   if (!force && now - PET.platsAt < 250) return PET.plats;
   PET.platsAt = now;
-  const roots = !$('#confirm').hidden ? ['#confirm'] : !$('#modal').hidden ? ['#modal'] : !$('#palette').hidden ? ['#palette'] : ['#app'];
-  const panel = PET.panel && roots[0] === '#app' ? $('#petpanel').getBoundingClientRect() : null;
-  if (panel) roots.push('#petpanel');
+  const root = !$('#confirm').hidden ? '#confirm' : !$('#modal').hidden ? '#modal' : !$('#palette').hidden ? '#palette' : '#app';
   const out = [];
-  for (const root of roots) {
-    for (const el of document.querySelectorAll(`${root} :is(${PET_SOLID})`)) {
-      const r = el.getBoundingClientRect();
-      if (r.width < 24 || r.height < 6 || r.top < PET_SIZE || r.top > innerHeight - 12 || r.right < 0 || r.left > innerWidth) continue;
-      if (panel && root !== '#petpanel' && r.left < panel.right && r.right > panel.left && r.top > panel.top && r.top < panel.bottom) continue; // hidden behind the panel
-      out.push({ el, l: r.left, r: r.right, t: r.top });
-      if (out.length > 900) break;
-    }
+  for (const el of document.querySelectorAll(`${root} :is(${PET_SOLID})`)) {
+    const r = el.getBoundingClientRect();
+    if (r.width < 24 || r.height < 6 || r.top < PET_SIZE || r.top > innerHeight - 12 || r.right < 0 || r.left > innerWidth) continue;
+    out.push({ el, l: r.left, r: r.right, t: r.top });
+    if (out.length > 900) break;
   }
   return (PET.plats = out);
 }
@@ -452,7 +346,7 @@ function petSupport() {
   PET.lift = petFloorY() - r.top;
   return true;
 }
-function petLand(lift, plat, now) {
+function petLand(lift, plat) {
   const hit = -PET.vy;
   PET.lift = lift; PET.vy = 0; PET.jumps = 0;
   PET.stand = plat ? { el: plat.el, t: plat.t } : null;
@@ -462,34 +356,6 @@ function petLand(lift, plat, now) {
 }
 
 /* ---------- The loop ---------- */
-function petBallTick(dt) {
-  const b = PET.ball;
-  if (!b) return;
-  if (!b.held) {
-    b.vy -= PET_GRAV * dt;
-    b.lift += b.vy * dt;
-    b.x += b.vx * dt;
-    if (b.lift <= 0) {
-      b.lift = 0;
-      if (b.vy < -160) b.vy = -b.vy * 0.68; else b.vy = 0;
-      b.vx *= Math.max(0, 1 - 1.3 * dt);
-    }
-    const r = PET_BALL / 2;
-    if (b.x < r) { b.x = r; b.vx = Math.abs(b.vx) * 0.8; } else if (b.x > innerWidth - r) { b.x = innerWidth - r; b.vx = -Math.abs(b.vx) * 0.8; }
-    const top = innerHeight - 110;
-    if (b.lift > top) { b.lift = top; b.vy = -Math.abs(b.vy) * 0.5; }
-    if (Math.abs(b.vx) > 8 || b.lift > 0) b.touched = Date.now();
-  }
-  b.el.style.transform = `translate3d(${Math.round(b.x - PET_BALL / 2)}px, ${Math.round(innerHeight - PET_FLOOR - PET_BALL - b.lift)}px, 0)`;
-  if (Date.now() - b.touched > 60000) { b.el.remove(); PET.ball = null; petPanelRender(); }
-}
-function petFoodTick(dt) {
-  const f = PET.food;
-  if (!f) return;
-  if (f.lift > 0) { f.vy -= PET_GRAV * 0.6 * dt; f.lift = Math.max(0, f.lift + f.vy * dt); }
-  f.el.style.transform = `translate3d(${Math.round(f.x - 16)}px, ${Math.round(innerHeight - PET_FLOOR - 20 - f.lift)}px, 0)`;
-}
-
 function petAir(dt, now, kx) {
   const prev = PET.lift, maxX = innerWidth - PET_SIZE - 4;
   PET.vy -= (PET_GRAV + (PET.keys.down ? 1800 : 0)) * dt;
@@ -506,15 +372,14 @@ function petAir(dt, now, kx) {
       if (cx < p.l - 6 || cx > p.r + 6 || f0 > p.t + 1 || f1 < p.t) continue;
       if (!best || p.t < best.t) best = p;
     }
-    if (best) return petLand(petFloorY() - best.t, best, now);
+    if (best) return petLand(petFloorY() - best.t, best);
   }
-  if (PET.lift <= 0) petLand(0, null, now);
+  if (PET.lift <= 0) petLand(0, null);
 }
 
 function petGround(dt, now, kx) {
-  const P = S.pet, maxX = innerWidth - PET_SIZE - 4, mid = PET.x + PET_SIZE / 2;
+  const maxX = innerWidth - PET_SIZE - 4;
   if (PET.mode === 'sleep') return;
-  if (PET.mode === 'eat') { if (now > PET.until) { petSetMode('idle'); petFinishEat(); } return; }
   if (PET.mode === 'trick') {
     if (now > PET.until) {
       const was = PET.trick;
@@ -528,50 +393,16 @@ function petGround(dt, now, kx) {
     PET.mode = 'walk'; PET.run = true;
     return;
   }
-  if (P.focus) { petSetMode('work'); return; }
-  if (PET.mode === 'work') petSetMode('idle');
-
-  let tx = null, speed = 58, chasing = false;
-  if (PET.arrive && PET.wx != null) { tx = PET.wx; speed = 170; } // just unlocked: hurry back to its spot
-  else if (PET.food && PET.food.lift <= 1) { tx = PET.food.x - PET_SIZE / 2; speed = 170; chasing = true; }
-  else if (PET.ball) { tx = PET.ball.x - PET_SIZE / 2; speed = 190; chasing = true; }
-  else if (PET.follow > now) { tx = PETM.x - PET_SIZE / 2; speed = 210; chasing = true; if (PETM.y < petTopY() - PET.lift - 110 && Math.abs(tx - PET.x) < 40 && Math.random() < 0.02) petJump(700); }
-  else if (PET.wx != null) tx = PET.wx;
-
-  if (tx != null) {
-    tx = petClamp(tx, 4, maxX);
-    const dx = tx - PET.x;
-    if (Math.abs(dx) > 6) {
-      PET.dir = dx > 0 ? 1 : -1;
-      PET.x += PET.dir * Math.min(Math.abs(dx), speed * dt);
-      PET.mode = 'walk';
-      PET.run = speed > 100;
-    } else {
-      if (!chasing) { PET.wx = null; PET.arrive = false; PET.nextWander = now + petRand(2500, 8000); }
-      PET.mode = 'idle'; PET.run = false;
-    }
-  } else {
-    PET.mode = 'idle'; PET.run = false;
-    if (now > PET.nextWander && !PET.panel && !PET.stand) { // it only wanders on the floor; up on the page it stays where you put it
-      PET.nextWander = now + petRand(3000, 8000);
-      if (Math.random() < 0.6) { const w = petRand(10, maxX); if (Math.abs(w - PET.x) > 80) PET.wx = w; }
-      else if (Math.random() < 0.15) petJump(560);
-    }
+  // nobody is steering it: climb down from the page and go to the corner (also what it does right after the unlock)
+  if (!PET.arrive && now - PET.manualAt > PET_PARK_MS && (PET.stand || Math.abs(PET.x - petCornerX()) > 6)) { PET.wx = petCornerX(); PET.arrive = true; }
+  if (PET.arrive && PET.stand) { PET.stand = null; PET.vy = 0; petSetMode('air'); return; }
+  if (PET.arrive) {
+    PET.wx = petCornerX();
+    const dx = PET.wx - PET.x;
+    if (Math.abs(dx) > 6) { PET.dir = dx > 0 ? 1 : -1; PET.x += PET.dir * Math.min(Math.abs(dx), 170 * dt); PET.mode = 'walk'; PET.run = true; return; }
+    PET.x = PET.wx; PET.wx = null; PET.arrive = false;
   }
-  if (PET.food && PET.food.lift <= 1 && PET.lift < 4 && Math.abs(mid - PET.food.x) < 30) {
-    petSetMode('eat', '', 1500);
-    petFx(['crumb'], 3);
-    PET.food.el.classList.add('eating');
-  }
-  const b = PET.ball;
-  if (b && now > PET.kickAt && Math.abs(mid - b.x) < 46 && Math.abs(b.lift - PET.lift) < 58 && !b.held) {
-    const k = b.x >= mid ? 1 : -1;
-    b.vx = k * petRand(380, 700); b.vy = petRand(420, 780); b.touched = now;
-    PET.kickAt = now + 500; PET.dir = k;
-    P.stats.balls++;
-    if (P.stats.balls % 8 === 0) petFx(['star', 'spark'], 2);
-    if (Math.random() < 0.35) petJump(520);
-  }
+  PET.mode = 'idle'; PET.run = false;
 }
 
 function petTick(ts) {
@@ -583,10 +414,8 @@ function petTick(ts) {
   const box = lockMode && document.querySelector('#lockHost .lockbox');
   const off = P.on === false || (lockMode && !box && !PET.placed); // on the lock screen it waits until the form exists
   if (PET.el.hidden !== off) { PET.el.hidden = off; PET.fxBox.hidden = off; }
-  for (const it of [PET.ball, PET.food]) if (it && it.el.hidden !== (off || lockMode)) it.el.hidden = off || lockMode;
   if (off) return;
   const now = Date.now();
-  if (!lockMode) { petBallTick(dt); petFoodTick(dt); }
 
   if (lockMode) petLockTick(dt, now, box);
   else {
@@ -598,13 +427,11 @@ function petTick(ts) {
   petClampX();
   PET.el.style.transform = `translate3d(${Math.round(PET.x)}px, ${Math.round(petTopY() - PET.lift)}px, 0)`;
   PET.el.style.setProperty('--lift', PET.lift.toFixed(0));
-  PET.el.style.setProperty('--dir', PET.dir > 0 ? -1 : 1); // the tail is drawn on the right, so it trails behind when facing right
 
   /* state for CSS and the sprite */
-  const talking = now < PET.talkUntil;
   const set = (k, v) => { if (PET.el.dataset[k] !== v) PET.el.dataset[k] = v; };
   set('mode', PET.mode); set('trick', PET.trick); set('run', PET.mode === 'walk' && PET.run ? '1' : '0');
-  petDraw(petPose(now, lockMode, talking));
+  petDraw(petPose(now, lockMode, now < PET.talkUntil));
 
   /* the bubble: typed text, then its position (below the pet when there is no room above it) */
   const b = PET.bub;
@@ -647,27 +474,26 @@ function petLockSwitch(on) {
   PET.lock = on;
   PET.el.dataset.lock = PET.fxBox.dataset.lock = on ? '1' : '0';
   PET.keys = {};
+  petMenuClose();
   if (on) {
     if (PET.live && S && S.pet) { PET.relock = true; petMirrorSave(); }
-    PET.panel = false; petPanelRender();
-    PET.follow = 0; PET.arrive = false; PET.wx = null; PET.stand = null; PET.badge.hidden = true;
+    PET.arrive = false; PET.wx = null; PET.stand = null;
     if (!PET.lockMsg) petHideBubble();
     petSetMode('lock');
-    petRedraw();
+    PET.frame = '';
     return;
   }
-  petRedraw();
-  const home = S.pet.x >= 0 ? S.pet.x : petRand(80, Math.max(100, innerWidth - 160));
-  PET.wx = petClamp(home, 4, Math.max(4, innerWidth - PET_SIZE - 4));
-  PET.arrive = true; // on its way home it ignores the page and lands on the floor
+  PET.frame = '';
+  PET.wx = petCornerX();
+  PET.arrive = true; // on its way to the corner it ignores the page and lands on the floor
   PET.dir = PET.wx > PET.x ? 1 : -1;
-  PET.vy = 420; // hops off the form and lands near its spot, then runs the rest
+  PET.vy = 420; // hops off the form and lands near the corner, then runs the rest
   PET.vx = petClamp((PET.wx - PET.x) / ((PET.vy + Math.sqrt(PET.vy ** 2 + 2 * PET_GRAV * PET.lift)) / PET_GRAV) / 0.75, -500, 500);
   PET.jumps = 1;
   petSetMode('air');
   PET.lockMsg = false;
   petHideBubble();
-  if (PET.relock) { PET.relock = false; petSay('unlocked. back to my spot.', { kind: 'ok' }); }
+  if (PET.relock) { PET.relock = false; petSay('unlocked. back to my corner.', { kind: 'ok' }); }
 }
 function petSquash() {
   PET.el.classList.remove('squash');
@@ -675,106 +501,26 @@ function petSquash() {
   PET.el.classList.add('squash');
 }
 
-/* ---------- Once a second: focus, sleep, chatter ---------- */
+/* ---------- Once a second: sleep and chatter ---------- */
 function petSec() {
   if (!PET.live || !S || !S.pet) return;
   const P = S.pet, now = Date.now();
   P.at = now; // when it was last with you (for "welcome back")
-  if (P.focus) {
-    const left = P.focus.end - now;
-    if (left <= 0) petEndFocus(true);
-    else if (!PET.lock) { PET.badge.hidden = false; PET.badge.textContent = petClock(left); }
-  } else if (!PET.badge.hidden) PET.badge.hidden = true;
-  if (!PET.lock) { // remember where it stands (its spot after the next unlock) and how it looks (for the lock screen)
-    if (PET.mode !== 'air') P.x = Math.round(PET.x);
-    petMirrorSave();
-  }
-
+  if (!PET.lock) petMirrorSave(); // its mood is remembered for the lock screen
   if (petVisible()) {
     const idle = now - lastActive, night = new Date().getHours() < 6;
-    if (PET.mode === 'sleep') {
-      if (PET.sleepAuto && idle < 3000) petWake(petPick(['yawn...', 'oh, you are back.']));
-      else if (!PET.sleepAuto && now > PET.napUntil) petWake('that was a good nap.');
-    } else if (!P.focus && ['idle', 'walk'].includes(PET.mode) && !PET.food && !PET.ball && PET.follow < now && !PET.keys.left && !PET.keys.right && idle > (night ? 45000 : 150000)) petSleep(false);
+    if (PET.mode === 'sleep') { if (idle < 3000) petWake(petPick(['rebooting...', 'welcome back.'])); }
+    else if (['idle', 'walk'].includes(PET.mode) && !PET.keys.left && !PET.keys.right && idle > (night ? 45000 : 150000)) petSleep();
     if (now > PET.nextChat) {
-      PET.nextChat = now + petRand(55000, 120000);
-      if (!document.hidden && !PET.panel && PET.bub.hidden && ['idle', 'walk'].includes(PET.mode) && idle < 120000) petChatter();
+      PET.nextChat = now + petRand(60000, 150000);
+      if (!document.hidden && PET.bub.hidden && ['idle', 'walk'].includes(PET.mode) && idle < 120000) petChatter();
     }
   }
-  if (PET.panel) petPanelUpdate();
 }
-const petClock = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${pad(Math.floor(s / 60))}:${pad(s % 60)}`; };
-
-/* ---------- Panel ---------- */
-I.paw = '<svg viewBox="0 0 24 24"><ellipse cx="5.5" cy="11" rx="2" ry="2.6"/><ellipse cx="9.5" cy="6.5" rx="2" ry="2.6"/><ellipse cx="14.5" cy="6.5" rx="2" ry="2.6"/><ellipse cx="18.5" cy="11" rx="2" ry="2.6"/><path d="M12 11.5c-3 0-6 3.2-6 5.7 0 1.9 1.6 2.8 3 2.8 1.3 0 2-.6 3-.6s1.7.6 3 .6c1.4 0 3-.9 3-2.8 0-2.5-3-5.7-6-5.7z"/></svg>';
-function petPanelHtml() {
-  const P = S.pet, now = Date.now(), days = Math.max(1, Math.round((now - P.born) / 864e5));
-  const tricks = [['jump', 'Jump', 'Up'], ['flip', 'Backflip', 'F'], ['dance', 'Dance', 'D'], ['dead', 'Play dead', 'X'], ['speak', 'Speak', 'S']];
-  return `<div class="pp-head"><div class="pet-ava">${PetSprite.svg(PetSprite.cat({ glasses: !!P.focus }), 3, [0, 3, 16, 16])}</div>
-      <div class="grow"><input id="petName" type="text" maxlength="16" value="${esc(P.name)}" spellcheck="false" aria-label="Pet name">
-        <div class="sub pp-meta">${PET.bad > 0 ? 'sad: critical alerts' : 'all good'}</div></div>
-      <button class="iconbtn" data-action="pet-panel" title="Close">${I.x}</button></div>
-    <div class="pp-sec pp-btns">
-      <button class="btn sm" data-action="pet-feed">${petIcon('fish', 2)} Feed</button>
-      <button class="btn sm ${PET.ball ? 'on' : ''}" data-action="pet-ball">${petIcon('ball', 2)} ${PET.ball ? 'Put the ball away' : 'Play ball'}</button>
-      <button class="btn sm ${PET.follow > now ? 'on' : ''}" data-action="pet-follow">Follow my cursor</button>
-      <button class="btn sm" data-action="pet-pat">${petIcon('heart', 2)} Pet</button>
-      <button class="btn sm" data-action="pet-nap">${PET.mode === 'sleep' ? 'Wake up' : 'Nap'}</button>
-    </div>
-    <div class="pp-sec"><div class="pp-lbl">tricks <span class="sub">click a button or press its key</span></div>
-      <div class="pp-btns">${tricks.map(([t, l, k]) => `<button class="btn sm" data-action="pet-trick" data-t="${t}">${l} <kbd>${k}</kbd></button>`).join('')}</div></div>
-    <div class="pp-sec"><div class="pp-lbl">move <span class="sub">it climbs on text and boxes</span></div>
-      <div class="pp-keys"><span><kbd>Left</kbd><kbd>Right</kbd> walk</span><span><kbd>Up</kbd> jump (twice = double jump)</span><span><kbd>Down</kbd> drop through</span></div></div>
-    <div class="pp-sec"><div class="pp-lbl">focus session <span class="sub">work together</span></div>
-      ${P.focus ? `<div class="pfocus"><b data-k="timer">${petClock(P.focus.end - now)}</b><span class="sub">left of ${P.focus.mins} min</span><span class="grow"></span><button class="btn sm danger" data-action="pet-focus-stop">Cancel</button></div>`
-        : `<div class="pp-btns">${[15, 25, 50].map(m => `<button class="btn sm" data-action="pet-focus" data-m="${m}">${m} min</button>`).join('')}</div>`}</div>
-    <div class="pp-foot sub">together ${days} day${days > 1 ? 's' : ''} · petted ${P.stats.pets}x · ${P.stats.tasks} tasks · ${P.stats.jobs} jobs · ${P.stats.focus} focus
-      <button class="btn sm" data-action="pet-hide" style="margin-inline-start:auto">Hide pet</button></div>`;
-}
-function petPanelRender() {
-  const el = $('#petpanel');
-  if (!el) return;
-  el.hidden = !PET.panel;
-  if (!PET.panel) return;
-  const y = el.scrollTop;
-  el.innerHTML = petPanelHtml();
-  el.scrollTop = y;
-}
-/** Cheap refresh while the panel is open (the focus clock), so typing a name is never interrupted */
-function petPanelUpdate() {
-  const el = $('#petpanel');
-  if (!PET.panel || !el || !S) return;
-  const P = S.pet;
-  if (!!el.querySelector('[data-k=timer]') !== !!P.focus) return petPanelRender();
-  const t = el.querySelector('[data-k=timer]');
-  if (t && P.focus) t.textContent = petClock(P.focus.end - Date.now());
-}
-
-Object.assign(actions, {
-  'pet-panel': () => { if (S.pet.on === false) petShow(true); PET.panel = !PET.panel; petPanelRender(); },
-  'pet-feed': () => petFeed(),
-  'pet-ball': () => { petBall(); petPanelRender(); },
-  'pet-follow': () => { petFollow(); petPanelRender(); },
-  'pet-pat': () => { if (petVisible()) petClicked(); },
-  'pet-nap': () => { if (PET.mode === 'sleep') petWake('good morning.'); else petSleep(true); petPanelRender(); },
-  'pet-trick': el => petDo(el.dataset.t),
-  'pet-focus': el => petStartFocus(Number(el.dataset.m)),
-  'pet-focus-stop': () => petEndFocus(false),
-  'pet-hide': () => { PET.panel = false; petShow(false); toast('Pet hidden. Bring it back from the paw button in the top bar'); },
-});
 
 /** Commands for the Ctrl+K palette */
 function petPaletteItems() {
-  const need = fn => () => { if (!S.pet.on) petShow(true); fn(); };
-  return [
-    { k: 'Pet', n: 'Open pet panel', run: () => actions['pet-panel']() },
-    { k: 'Pet', n: S.pet.on ? 'Hide pet' : 'Show pet', run: () => petShow(!S.pet.on) },
-    { k: 'Pet', n: 'Feed pet', run: need(petFeed) },
-    { k: 'Pet', n: 'Play ball with pet', run: need(petBall) },
-    { k: 'Pet', n: 'Pet follows my cursor', run: need(petFollow) },
-    { k: 'Pet', n: 'Pet does a trick', run: need(() => petDo(petPick(['flip', 'dance', 'dead', 'speak']))) },
-    { k: 'Pet', n: 'Start 25-minute focus session', run: need(() => petStartFocus(25)) },
-  ];
+  return [{ k: 'Pet', n: S.pet.on ? 'Hide the robot' : 'Show the robot', run: () => petShow(!S.pet.on) }];
 }
 
 /* ---------- Setup ---------- */
@@ -783,34 +529,24 @@ function petBoot() {
   try {
     if (PET.ready) return;
     const host = document.createElement('div');
-    host.innerHTML = `<div id="pet" hidden><div class="pet-bubble" hidden></div><div class="pet-badge" hidden></div>
-        <div class="pet-shadow"></div><div class="pet-flip"><div class="pet-sq"><div class="pet-fig"></div></div></div></div>
-      <div id="petfx" hidden></div><div id="petpanel" hidden></div>`;
+    host.innerHTML = `<div id="pet" hidden><div class="pet-bubble" hidden></div><div class="pet-shadow"></div><div class="pet-flip"><div class="pet-sq"><div class="pet-fig"></div></div></div></div>
+      <div id="petfx" hidden></div><div id="petmenu" hidden></div>`;
     while (host.firstChild) document.body.appendChild(host.firstChild);
-    Object.assign(PET, { el: $('#pet'), fig: $('#pet .pet-fig'), bub: $('#pet .pet-bubble'), badge: $('#pet .pet-badge'), fxBox: $('#petfx') });
+    Object.assign(PET, { el: $('#pet'), fig: $('#pet .pet-fig'), bub: $('#pet .pet-bubble'), fxBox: $('#petfx'), menu: $('#petmenu') });
     PET.mirror = petMirrorLoad();
     PET.x = innerWidth / 2;
-    $('#topbar [data-action="pet-panel"]').innerHTML = I.paw;
 
-    PET.el.addEventListener('mousedown', e => {
-      if (e.button !== 0 || e.target.closest('.pet-bubble')) return;
-      e.preventDefault(); // keeps the focus (and a half-typed password) where it was
-      petClicked();
-    });
-    PET.el.addEventListener('contextmenu', e => { e.preventDefault(); if (!petLockMode()) actions['pet-panel'](); });
+    PET.el.addEventListener('contextmenu', petMenuOpen);
     PET.bub.addEventListener('click', () => { const n = PET.bubNav; petHideBubble(); if (n && !petLockMode() && proj(n.pid)) openProject(n.pid, n.tab || 'tasks'); });
-    document.addEventListener('mousedown', e => { if (e.button === 0 && PET.ball && e.target.closest && e.target.closest('.pet-ball') === PET.ball.el) petGrabBall(e); });
-    addEventListener('mousemove', petMouseMove, { passive: true });
-    addEventListener('mouseup', petMouseUp);
+    PET.menu.addEventListener('click', e => { if (e.target.closest('[data-pet-hide]')) { petShow(false); toast('Robot hidden. Turn it back on in Settings.'); } });
+    document.addEventListener('mousedown', e => { if (!PET.menu.hidden && !e.target.closest('#petmenu')) petMenuClose(); }, true);
+    addEventListener('mousemove', e => { PETM.x = e.clientX; PETM.y = e.clientY; }, { passive: true });
     addEventListener('resize', petClampX);
     addEventListener('blur', () => { PET.keys = {}; });
     document.addEventListener('keydown', petKeyDown);
     document.addEventListener('keyup', petKeyUp);
-    document.addEventListener('change', e => { if (e.target.id === 'petName') { S.pet.name = e.target.value.trim().slice(0, 16) || 'Pixel'; e.target.value = S.pet.name; petSaveSoon(); } });
-    document.addEventListener('keydown', e => {
-      if (e.target.id === 'petName' && e.key === 'Enter') e.target.blur();
-      else if (e.key === 'Escape' && PET.panel && $('#modal').hidden && $('#confirm').hidden && $('#palette').hidden) { PET.panel = false; petPanelRender(); }
-    });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') petMenuClose(); });
+    document.addEventListener('change', e => { if (e.target.id === 'petOn') petShow(e.target.checked); });
     PET.ready = true;
     setInterval(petSec, 1000);
     requestAnimationFrame(petTick);
@@ -821,17 +557,13 @@ function petBoot() {
 function petInit() {
   try {
     if (!PET.ready || PET.live) return;
-    const P = S.pet, now = Date.now(), away = now - P.at;
-    PET.nextChat = now + 20000; PET.nextWander = now + 3000;
-    if (P.focus && P.focus.end < now) P.focus = null;
+    const now = Date.now(), away = now - S.pet.at;
+    PET.nextChat = now + 20000;
     PET.live = true;
-
-    /* greeting */
     setTimeout(() => {
       if (!petVisible()) return;
-      const h = new Date().getHours(), hi = h < 5 ? 'still up?' : h < 12 ? 'good morning.' : h < 18 ? 'good afternoon.' : 'good evening.';
-      if (away > 2 * 3600e3) petSay(`welcome back. i missed you (${Math.round(away / 3600e3)} h).`);
-      else petSay(hi);
+      const h = new Date().getHours();
+      petSay(away > 2 * 3600e3 ? `welcome back. i missed you (${Math.round(away / 3600e3)} h).` : h < 5 ? 'still up?' : h < 12 ? 'good morning.' : h < 18 ? 'good afternoon.' : 'good evening.');
     }, 1800);
   } catch (e) { console.error('pet init failed', e); }
 }

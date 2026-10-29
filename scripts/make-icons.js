@@ -6,10 +6,9 @@ const fs = require('fs');
 const path = require('path');
 
 const OUT = path.join(__dirname, '..', 'assets');
-const { logo } = require('../renderer/petsprite.js');
+const { logo } = require('../renderer/petart.js');
 
-/** The app icon is the pet (renderer/petsprite.js): its face on a dark 16 x 16 pixel tile, so power-of-two sizes stay pixel-perfect.
- *  `dot` adds a status dot (tray). */
+/** The app icon is the pet (renderer/petart.js): its head and shoulders on a dark rounded tile. `dot` adds a status dot (tray). */
 const pet = dot => logo({ dot });
 
 /* Rasterises the SVG vector directly at size x size on a canvas (a window cannot be made smaller than ~32px and would distort the small sizes) */

@@ -249,7 +249,8 @@ function viewSettings() {
   const opt = (arr, cur) => arr.map(([v, l]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${l}</option>`).join('');
   return `<div class="page-head"><h1>Settings</h1></div>
     <div class="set-grid">
-      <div class="card"><h2>Appearance</h2><div class="seg">${[['system', 'Match system'], ['light', 'Light'], ['dark', 'Dark']].map(([v, l]) => `<button class="${th === v ? 'on' : ''}" data-action="theme" data-v="${v}">${l}</button>`).join('')}</div></div>
+      <div class="card"><h2>Appearance</h2><div class="seg">${[['system', 'Match system'], ['light', 'Light'], ['dark', 'Dark']].map(([v, l]) => `<button class="${th === v ? 'on' : ''}" data-action="theme" data-v="${v}">${l}</button>`).join('')}</div>
+        <label class="row" style="gap:8px;margin:14px 0 0"><input type="checkbox" id="petOn" ${S.pet.on ? 'checked' : ''}> Show the robot (move it with the arrow keys; right-click it to hide)</label></div>
       <div class="card"><h2>${I.lock.replace('<svg', '<svg style="vertical-align:-3px"')} Security and master password</h2>
         <p class="sub">All data (projects, commands, logs and secrets) is encrypted on disk with <b>AES-256-GCM</b>. The key is derived from your master password with scrypt, is stored nowhere and is wiped from memory on lock. Tampering with the files is also detected.</p>
         <div class="row"><button class="btn primary" data-action="lock-now">${I.lock}Lock now</button><button class="btn" data-action="pw-change">Change master password</button></div>
