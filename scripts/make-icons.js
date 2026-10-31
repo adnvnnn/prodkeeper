@@ -8,11 +8,12 @@ const path = require('path');
 const OUT = path.join(__dirname, '..', 'assets');
 const INK = '#0a0a0b', LINE = '#2b2b31', FG = '#ededef';
 
-/** Dark tile with a solid shield; an upward chevron is cut out of it. `dot` adds a status dot (tray). */
+/** Dark tile with three stacked chevrons: the live release on top, older ones fading below. `dot` adds a status dot (tray). */
 const logo = dot => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="100%" height="100%">
-  <defs><mask id="m"><rect width="64" height="64" fill="#fff"/><polyline points="22,36 32,26 42,36" fill="none" stroke="#000" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/></mask></defs>
   <rect x=".5" y=".5" width="63" height="63" rx="14" fill="${INK}" stroke="${LINE}"/>
-  <path mask="url(#m)" fill="${FG}" d="M32 9 L52 16.5 V31 C52 44 43.5 53 32 57.5 C20.5 53 12 44 12 31 V16.5 Z"/>
+  <g fill="none" stroke="${FG}" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M15 26 L32 13 L49 26"/><path d="M15 38 L32 25 L49 38" opacity=".5"/><path d="M15 50 L32 37 L49 50" opacity=".28"/>
+  </g>
   ${dot ? `<circle cx="49" cy="49" r="12" fill="${INK}"/><circle cx="49" cy="49" r="8.5" fill="${dot}"/>` : ''}
 </svg>`;
 
