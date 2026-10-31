@@ -252,7 +252,7 @@ pre.console { margin: 0; background: var(--code-bg); color: #d4d6dc; padding: 12
 .lockbox { display: grid; gap: 14px; }
 .lockbox h2 { margin: 6px 0 0; font-size: 22px; font-weight: 650; letter-spacing: -.2px; }
 .lockbox p { margin: 0; }
-.lockbox .err:empty { display: none; } /* the pet says the messages; the text only shows when the pet is turned off */
+.lockbox .err:empty { display: none; }
 .lockbox input { width: 100%; }
 
 /* ---------- Command palette ---------- */

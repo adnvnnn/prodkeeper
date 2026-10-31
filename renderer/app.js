@@ -8,7 +8,7 @@ const C = { git: {}, gd: {}, tb: {}, health: {}, ci: {}, wf: {}, backups: {}, va
 const V = { name: 'projects', pid: null, tab: 'tasks', bfilter: 'all', hKind: '', hProj: '', vProj: '', runId: null };
 const RUN = {}; // jobs in flight: id -> {h}
 
-const blank = () => ({ version: 2, projects: [], history: [], runlog: [], archive: [], checks: {}, settings: { theme: 'dark', healthMin: 5, notified: '', autoLockMin: 15, notifyOn: true, wip: T_WIP_DEFAULT }, pet: normPet() });
+const blank = () => ({ version: 2, projects: [], history: [], runlog: [], archive: [], checks: {}, settings: { theme: 'dark', healthMin: 5, notified: '', autoLockMin: 15, notifyOn: true, wip: T_WIP_DEFAULT } });
 const normProject = p => normTasks({
   repoPath: '', ...p, desc: undefined, notes: undefined, color: undefined,
   priority: [0, 1, 2].includes(p.priority) ? p.priority : 1,
@@ -41,7 +41,6 @@ function normalize(d) {
     archive: Array.isArray(d.archive) ? d.archive : [],
     checks: d.checks && typeof d.checks === 'object' ? d.checks : {},
     settings: { ...b.settings, ...(d.settings || {}) },
-    pet: normPet(d.pet),
   };
   if (!['system', 'light', 'dark'].includes(out.settings.theme)) out.settings.theme = 'dark';
   if (!(out.settings.wip >= 0)) { // the WIP limit used to be set per app: keep the first one that was set
@@ -334,7 +333,6 @@ async function runJob({ pid, kind, refId, title, spec, silent, auto }) {
   if (!silent) toast(`${title}: ${h.status === 'ok' ? 'success' : h.status === 'killed' ? 'stopped' : 'failed'}`, h.status !== 'ok' && h.status !== 'killed');
   if (kind === 'backup') { const p = proj(pid), b = p && p.backups.find(x => x.id === refId); if (b) await loadBackups(b); }
   if (kind === 'deploy' && h.status === 'ok') postDeployHealth(pid, refId, id, h);
-  petEvent('job', { kind, status: h.status, title, auto: !!auto });
   softRender();
   return h;
 }
@@ -833,7 +831,6 @@ function syncAlerts(first) {
   const fresh = bad.filter(a => !seenAlerts.has(a.pid + '|' + a.text));
   for (const k of [...seenAlerts]) if (!keys.has(k)) seenAlerts.delete(k);
   keys.forEach(k => seenAlerts.add(k));
-  petEvent('alerts', { bad: bad.length, warn: A.length - bad.length, fresh });
   if (!fresh.length || !S.settings.notifyOn) return;
   if (first && S.settings.notified === todayISO()) return; // after the app opens, do not repeat today's earlier alerts
   if (first) { S.settings.notified = todayISO(); save(); }
@@ -880,20 +877,19 @@ function lockScreen(st) {
     const f = $('#lockScreenForm');
     f.elements.pw.focus();
     const finish = () => { el.hidden = true; host.innerHTML = ''; resolve(); };
-    // the pet says the messages; if it is turned off they are shown as text under the form, as before
-    const say = (text, kind) => { $('#lockErr').textContent = petLockSay(text, kind) ? '' : text; };
-    if (st.waitSec) say(`Too many failed attempts; wait ${num(st.waitSec)} seconds`, 'err');
-    else say(setup ? 'hi! create a master password for me to guard. if you forget it, nobody can recover it.' : 'welcome back. enter your master password.', 'info');
+    const say = text => { $('#lockErr').textContent = text; };
+    if (st.waitSec) say(`Too many failed attempts; wait ${num(st.waitSec)} seconds`);
+    else say(setup ? 'hi! create a master password for me to guard. if you forget it, nobody can recover it.' : 'welcome back. enter your master password.');
     f.onsubmit = async e => {
       e.preventDefault();
       const pw = f.elements.pw.value;
       if (setup) {
-        if (pw.length < 8) { say('The password must be at least 8 characters', 'err'); return; }
-        if (pw !== f.elements.pw2.value) { say('The passwords do not match', 'err'); return; }
+        if (pw.length < 8) { say('The password must be at least 8 characters'); return; }
+        if (pw !== f.elements.pw2.value) { say('The passwords do not match'); return; }
       }
-      say('Checking…', 'info');
+      say('Checking…');
       const r = setup ? await native.sec.setup(pw) : await native.sec.unlock(pw);
-      if (r.error) { say(r.error, 'err'); f.elements.pw.select(); return; }
+      if (r.error) { say(r.error); f.elements.pw.select(); return; }
       finish();
     };
   });
@@ -941,7 +937,6 @@ async function init() {
   await loadVault();
   render();
   pushPopup();
-  petInit();
   await refreshAll();
   startHealthTimer();
   syncAlerts(true);

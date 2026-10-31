@@ -40,7 +40,6 @@ function setTaskStatus(p, t, status) {
   if (status === 'backlog') t.sprintId = '';
   else if (!t.sprintId && sp) t.sprintId = sp.id;
   if (status === 'doing' && !t.startedAt) t.startedAt = Date.now();
-  if (status === 'done' && was !== 'done') petEvent('task-done', { p, t });
 }
 
 /** Deleting a finished task must not erase it from the reports, so the facts the reports use are kept */

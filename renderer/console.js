@@ -16,7 +16,6 @@ function paletteItems() {
     if (!activeSprint(p)) it.push({ k: 'Action', n: `Start sprint — ${p.name}`, run: () => { V.tview = 'board'; openProject(p.id, 'tasks'); sprintStartModal(p.id); } });
   }
   it.push({ k: 'Action', n: 'Tasks popup (Ctrl+Alt+T)', run: () => native.popup && native.popup.toggle() });
-  it.push(...petPaletteItems());
   it.push({ k: 'Action', n: 'New vault item', run: () => vaultModal() });
   it.push({ k: 'Action', n: 'Refresh all projects', run: () => refreshAll(true) });
   it.push({ k: 'Action', n: 'Show alerts', run: () => { V.bell = true; renderTopbar(); } });

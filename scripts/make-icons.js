@@ -1,15 +1,20 @@
 'use strict';
-// Renders the app icon (the pet) to assets/: icon.png, icon.ico and tray-{ok,warn,bad}.png.
+// Renders the app logo to assets/: icon.png, icon.ico and tray-{ok,warn,bad}.png.
 // Run with:  npx electron scripts/make-icons.js
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
 const OUT = path.join(__dirname, '..', 'assets');
-const { logo } = require('../renderer/petart.js');
+const INK = '#0a0a0b', LINE = '#2b2b31', FG = '#ededef';
 
-/** The app icon is the pet (renderer/petart.js): its head and shoulders on a dark rounded tile. `dot` adds a status dot (tray). */
-const pet = dot => logo({ dot });
+/** Dark tile with a solid shield; an upward chevron is cut out of it. `dot` adds a status dot (tray). */
+const logo = dot => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="100%" height="100%">
+  <defs><mask id="m"><rect width="64" height="64" fill="#fff"/><polyline points="22,36 32,26 42,36" fill="none" stroke="#000" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/></mask></defs>
+  <rect x=".5" y=".5" width="63" height="63" rx="14" fill="${INK}" stroke="${LINE}"/>
+  <path mask="url(#m)" fill="${FG}" d="M32 9 L52 16.5 V31 C52 44 43.5 53 32 57.5 C20.5 53 12 44 12 31 V16.5 Z"/>
+  ${dot ? `<circle cx="49" cy="49" r="12" fill="${INK}"/><circle cx="49" cy="49" r="8.5" fill="${dot}"/>` : ''}
+</svg>`;
 
 /* Rasterises the SVG vector directly at size x size on a canvas (a window cannot be made smaller than ~32px and would distort the small sizes) */
 async function render(win, svg, size) {
@@ -40,14 +45,14 @@ app.whenReady().then(async () => {
   fs.mkdirSync(OUT, { recursive: true });
   const win = new BrowserWindow({ show: false });
   await win.loadURL('data:text/html,<body></body>');
-  const base = pet('');
+  const base = logo('');
   fs.writeFileSync(path.join(OUT, 'icon.png'), await render(win, base, 512));
   const sizes = [16, 24, 32, 48, 64, 128, 256];
   const images = [];
   for (const size of sizes) images.push({ size, png: await render(win, base, size) });
   fs.writeFileSync(path.join(OUT, 'icon.ico'), ico(images));
   for (const [name, dot] of [['ok', ''], ['warn', '#e8a23a'], ['bad', '#f0525f']]) {
-    fs.writeFileSync(path.join(OUT, `tray-${name}.png`), await render(win, pet(dot), 32));
+    fs.writeFileSync(path.join(OUT, `tray-${name}.png`), await render(win, logo(dot), 32));
   }
   console.log('icons written to', OUT);
   app.quit();
