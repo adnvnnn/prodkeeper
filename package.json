@@ -6,7 +6,8 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "node scripts/dist.js"
+    "dist": "node scripts/dist.js",
+    "test:recovery": "set ELECTRON_RUN_AS_NODE=1&& node_modules\\electron\\dist\\electron.exe scripts\\test-recovery.js"
   },
   "build": {
     "appId": "dev.prodkeeper.app",

@@ -149,12 +149,12 @@ function viewTasksAll() {
 }
 
 /* ---------- Edit dialog ---------- */
-function taskModal(pid, tid) {
+async function taskModal(pid, tid) {
   if (!S.projects.length) { toast('Create a project first', true); return; }
   const p = proj(pid) || proj(V.pid) || S.projects[0];
   const t = tid ? p.tasks.find(x => x.id === tid) : { title: '', status: 'backlog', priority: 1, estimate: 0, branch: '', projectId: p.id };
   const opt = (arr, cur) => arr.map(([v, l]) => `<option value="${v}" ${String(v) === String(cur) ? 'selected' : ''}>${l}</option>`).join('');
-  const branches = ((C.tb[p.id] || {}).branches || []).filter(b => !b.isRemote).map(b => `<option value="${esc(b.name)}">`).join('');
+  const names = await localBranches(p);
   const canStart = tid && p.repoPath && t.status !== 'done';
   openModal(`<form id="taskForm" data-pid="${p.id}" data-id="${tid || ''}">${modalHead(tid ? `${taskKey(p, t)} · Edit task` : 'New task')}
     <div class="body">
@@ -164,8 +164,8 @@ function taskModal(pid, tid) {
       <div class="two"><div class="field"><label>Priority</label><select name="priority">${opt(T_PRIO.map((l, i) => [i, l]), t.priority)}</select></div>
         <div class="field"><label>Estimate (story points)</label><select name="estimate">${opt([[0, 'None'], ...T_POINTS.map(n => [n, n])], t.estimate || 0)}</select></div></div>
       <div class="field"><label>Git branch</label>
-        <div class="row"><input type="text" name="branch" list="tbranches" value="${esc(t.branch || '')}" placeholder="Link a branch; the task closes itself when it is merged" style="flex:1;direction:ltr"><datalist id="tbranches">${branches}</datalist>
-          ${canStart ? `<button type="button" class="btn sm" data-action="task-start" data-pid="${p.id}" data-id="${tid}" title="Create a branch for this task, switch to it and move the task to In progress">${I.branch}Start branch</button>` : ''}</div></div>
+        <div class="row">${branchSelect('branch', t.branch || '', names, '— No branch (the task closes itself when its branch is merged) —', 'style="flex:1"')}
+          ${canStart ? `<button type="button" class="btn" data-action="task-start" data-pid="${p.id}" data-id="${tid}" title="Create a branch for this task, switch to it and move the task to In progress">${I.branch}Start branch</button>` : ''}</div></div>
     </div>${footerBtns(tid ? `<button type="button" class="btn danger" data-action="task-del" data-pid="${p.id}" data-id="${tid}">${I.trash}Delete</button>` : '')}</form>`);
 }
 
@@ -212,7 +212,7 @@ async function loadTaskBranches(p) {
       setTaskStatus(p, t, 'done');
       t.doneVia = 'merge';
       changed = true;
-      toast(`${taskKey(p, t)} done — ${t.branch} was merged`);
+      toast(`${taskKey(p, t)} done — ${t.branch} was merged${p.deploys.some(d => d.branch && d.branch === r.default) ? '. Check CI, then deploy from the Deploy tab' : ''}`);
     }
   }
   if (changed) save();
@@ -255,6 +255,17 @@ Object.assign(actions, {
   },
   tfilter: el => { V.tfilter = el.dataset.v; render(); },
   tview: el => { V.tview = el.dataset.v; navPush(); render(); if (el.dataset.v === 'board') enterTab(); },
+});
+
+// Moving a task to another project: the branch dropdown must list that project's branches
+document.addEventListener('change', async e => {
+  const f = e.target.form;
+  if (!f || f.id !== 'taskForm' || e.target.name !== 'projectId') return;
+  const p = proj(e.target.value), sel = f.elements.branch;
+  if (!p) return;
+  const names = await localBranches(p);
+  if (f.elements.projectId.value !== p.id) return; // changed again while the branches were loading
+  sel.outerHTML = branchSelect('branch', p.id === f.dataset.pid ? sel.value : '', names, sel.options[0].textContent, 'style="flex:1"');
 });
 
 document.addEventListener('submit', e => {

@@ -31,5 +31,5 @@ contextBridge.exposeInMainWorld('api', {
     update: inv('popup:update'), toggle: inv('popup:toggle'),
     onAction: cb => ipcRenderer.on('popup:action', (_e, a) => cb(a)),
   },
-  ci: { runs: inv('ci:runs'), workflows: inv('ci:workflows'), action: inv('ci:action') },
+  ci: { runs: inv('ci:runs'), workflows: inv('ci:workflows'), action: inv('ci:action'), detect: inv('ci:detect'), scaffold: inv('ci:scaffold') },
 });

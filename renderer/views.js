@@ -19,7 +19,7 @@ function renderTopbar() {
   const p = V.name === 'project' && proj(V.pid);
   $('#nav').innerHTML = NAV_ITEMS.map(([name, label]) => `<button class="nav ${V.name === name ? 'active' : ''}" data-action="go" data-to="${name}">${label}</button>`).join('')
     + (p ? `<span class="crumb"><span class="sdot ${projSeverity(p.id)}"></span>${esc(p.name)}</span>` : '');
-  $('#bellBox').innerHTML = `<button class="tbtn ${A.length ? 'alerting' : ''}" data-action="bell" title="Alerts">${I.bell}${A.length ? `<span class="badge ${bad ? 'bad' : ''}">${num(A.length)}</span>` : ''}</button>
+  $('#bellBox').innerHTML = `<button class="tbtn ${A.length ? 'alerting' : ''}" data-action="bell" title="Alerts">${I.alert}${A.length ? `<span class="badge ${bad ? 'bad' : ''}">${num(A.length)}</span>` : ''}</button>
     ${V.bell ? `<div class="bellpanel"><div class="bellhead">Alerts</div>
       <div class="bellbody">${A.length ? A.map(a => alertRow(a)).join('') : `<div class="okline">${I.tick}Nothing needs attention.</div>`}</div></div>` : ''}`;
   const n = Object.keys(RUN).length;
@@ -80,8 +80,9 @@ function ciBadge(r) {
 /* ---------- Project page ---------- */
 /** Build, and run the app itself (e.g. a dev server): Run / Logs + Stop while it is up, and a shortcut to its URL */
 function runButtons(p) {
-  const up = isRunning(p.id), building = isRunning(p.id + ':build');
-  return `<button class="btn" data-action="app-build" ${building ? 'disabled' : ''}>${I.deploy}${building ? 'Building…' : 'Build'}</button>
+  const up = isRunning(p.id), building = isRunning(p.id + ':build'), testing = isRunning(p.id + ':test');
+  return `<button class="btn" data-action="app-test" ${testing ? 'disabled' : ''}>${I.tick}${testing ? 'Testing…' : 'Test'}</button>
+    <button class="btn" data-action="app-build" ${building ? 'disabled' : ''}>${I.deploy}${building ? 'Building…' : 'Build'}</button>
     ${p.run.url ? `<button class="btn" data-action="open-url" data-url="${esc(p.run.url)}" title="${esc(p.run.url)}">${I.globe}Open app</button>` : ''}
     ${up ? `<button class="btn" data-action="app-log">Logs</button><button class="btn danger" data-action="app-stop">${I.stop}Stop</button>`
       : `<button class="btn primary" data-action="app-run">${I.play}Run</button>`}`;
@@ -118,6 +119,7 @@ function tabGit(p) {
       ${g.dirty ? `<button class="btn sm primary" data-action="git-commit">${I.tick}Commit</button>` : ''}
       ${g.ahead || !g.upstream ? `<button class="btn sm ${g.dirty ? '' : 'primary'}" data-action="git-push" data-id="${p.id}">${I.up}Push</button>` : ''}<button class="btn sm" data-action="git-new-branch">${I.plus}New branch</button></div></div>
     ${g.remote ? `<div class="sub" style="margin-top:6px;direction:ltr;text-align:left">${esc(g.remote)}</div>` : ''}
+    ${p.ci.repo && g.last ? (() => { const r = ciOfCommit(p, g.last.hash); return `<div class="row" style="margin-top:8px"><span class="sub">CI on the current commit (${esc(g.last.hash)}):</span>${r ? ciBadge(r) : chip(g.ahead ? 'Not pushed yet, so CI has not seen it' : 'No CI run found', 'today')}<button class="btn sm" data-action="set-tab" data-tab="ci">Open CI/CD</button></div>`; })() : ''}
     ${g.dirty ? `<details style="margin-top:10px"><summary>Changed files (${num(g.dirty)})</summary><div class="files">${g.files.map(f => `<div><code>${esc(f.xy)}</code> ${esc(f.path)}</div>`).join('')}${g.dirty > g.files.length ? '<div class="sub">…</div>' : ''}</div></details>` : ''}</div>`;
   if (!gd) return head + '<div class="empty card">Loading branches…</div>';
 
@@ -128,12 +130,13 @@ function tabGit(p) {
     <span class="tt"><b>${esc(b.name)}</b>
       ${b.current ? chip('Current', 'okc') : ''}${b.isRemote ? chip('Remote only', '') : ''}${b.merged ? chip('Merged', 'soon') : ''}${b.gone ? chip('Deleted on remote', 'today') : ''}${!b.isRemote && !b.upstream ? chip('Local only', 'today') : ''}
       ${b.ahead ? chip(num(b.ahead), 'soon', I.up) : ''}${b.behind ? chip(num(b.behind), 'today', I.down) : ''}
+      ${p.ci.repo && ciOfBranch(p, b.name) ? `<span title="Latest CI run on this branch">${ciBadge(ciOfBranch(p, b.name))}</span>` : ''}${p.deploys.some(d => d.branch === b.name) ? chip('Deploy branch', 'soon', I.deploy) : ''}
       <div class="sub" style="font-size:12px">${esc(b.subject)} · ${esc(b.author)} · ${ago(b.date)}</div></span>
     ${b.current ? '' : b.isRemote
       ? `<button class="btn sm" data-action="git-checkout" data-name="${esc(b.name)}" data-remote="1">Checkout</button><button class="iconbtn" title="Delete from remote" data-action="git-del-remote" data-name="${esc(b.name)}">${I.trash}</button>`
       : `<button class="btn sm" data-action="git-checkout" data-name="${esc(b.name)}">Checkout</button><button class="btn sm" title="Merge into the current branch" data-action="git-merge" data-name="${esc(b.name)}">${I.merge}Merge</button><button class="iconbtn" title="Delete branch" data-action="git-del" data-name="${esc(b.name)}">${I.trash}</button>`}</div>`;
   const mergedCount = br.filter(b => b.merged && !b.current).length;
-  const commits = (gd.lg.commits || []).map(c => `<div class="trow" style="cursor:default"><code>${esc(c.hash)}</code><span class="tt">${esc(c.subject)}${c.refs ? ` <span class="sub">(${esc(c.refs)})</span>` : ''}</span><span class="sub">${esc(c.author)} · ${ago(c.ts)}</span></div>`).join('');
+  const commits = (gd.lg.commits || []).map(c => { const r = p.ci.repo && ciOfCommit(p, c.hash); return `<div class="trow" style="cursor:default"><code>${esc(c.hash)}</code><span class="tt">${esc(c.subject)}${c.refs ? ` <span class="sub">(${esc(c.refs)})</span>` : ''}</span>${r ? `<span title="${esc(r.name)}">${ciBadge(r)}</span>` : ''}<span class="sub">${esc(c.author)} · ${ago(c.ts)}</span></div>`; }).join('');
   const tags = (gd.tg.tags || []).map(t => `<div class="trow" style="cursor:default">${I.tag}<b>${esc(t.name)}</b><span class="tt sub">${esc(t.subject || '')}</span><span class="sub">${ago(t.ts)}</span><button class="btn sm" data-action="git-tag-push" data-name="${esc(t.name)}">Push</button></div>`).join('');
   return head + `
     <div class="card section" style="margin-bottom:16px"><h2>Branches <span class="grow"></span>
@@ -144,14 +147,29 @@ function tabGit(p) {
 }
 
 /* ---------- Deploy ---------- */
+/** A deploy as a pipeline: Tests → CI → Deploy → Site, each with its latest result; shown on the deploy card and in the CI/CD tab */
+function pipelineStrip(p, d) {
+  const stage = (label, inner) => `<span class="pstage"><span class="sub">${label}</span>${inner}</span>`, none = chip('—', '');
+  const t = lastRun(p.id + ':test', 'test'), ci = C.ci[p.id], cr = ci && ci.runs && ci.runs.find(r => r.branch === d.branch);
+  const dr = lastRun(d.id, 'deploy'), env = p.envs.find(e => e.id === d.envId), h = env && C.health[env.id], parts = [];
+  if (d.preTest) parts.push(stage('Tests', t ? runChip(t) : none));
+  if (p.ci.repo && d.ciGate !== 'off') parts.push(stage('CI', cr ? ciBadge(cr) : none));
+  if (d.backupId) { const bk = lastRun(d.backupId, 'backup'); parts.push(stage('Backup', bk ? runChip(bk) : none)); }
+  if (d.publishId) { const pb = lastRun(d.publishId, 'publish'); parts.push(stage('Publish', pb ? runChip(pb) : none)); }
+  if (d.dbUpdateId) { const db = lastRun(d.dbUpdateId, 'dbupdate'); parts.push(stage('DB update', db ? runChip(db) : none)); }
+  parts.push(stage('Deploy', dr ? runChip(dr) : none));
+  if (env) parts.push(stage('Site', h ? chip(h.ok ? 'Healthy' : 'Down', h.ok ? 'okc' : 'late') : none));
+  return `<div class="row pipeline">${parts.join('<span class="sub">→</span>')}${d.auto ? chip('Auto after CI', 'soon', I.play) : ''}</div>`;
+}
 function tabDeploy(p) {
   const hist = S.history.filter(h => h.projectId === p.id && ['deploy', 'publish', 'dbupdate'].includes(h.kind)).slice(0, 8);
   const cards = p.deploys.map(d => {
     const r = lastRun(d.id, 'deploy'), env = p.envs.find(e => e.id === d.envId), run = isRunning(d.id);
-    return `<div class="card section">
-      <div class="row between"><h2 style="margin:0">${I.deploy}${esc(d.name)} ${env ? chip(esc(env.name), 'soon', I.globe) : ''}${d.branch ? chip(esc(d.branch), '', I.branch) : ''}</h2>
+    return `<div class="card section" ${dndItem('deploys', d.id)}>
+      <div class="row between"><h2 style="margin:0">${dndGrip}${I.deploy}${esc(d.name)} ${env ? chip(esc(env.name), 'soon', I.globe) : ''}${d.branch ? chip(esc(d.branch), '', I.branch) : ''}</h2>
         <div class="row"><button class="iconbtn" data-action="deploy-edit" data-id="${d.id}" title="Edit">${I.edit}</button><button class="btn primary" data-action="deploy-run" data-id="${d.id}" ${run ? 'disabled' : ''}>${I.play}${run ? 'Running…' : 'Deploy'}</button></div></div>
       <code class="cmd">${esc(d.command)}</code>
+      <div style="margin-top:8px">${pipelineStrip(p, d)}</div>
       <div class="sub" style="margin-top:8px">${r ? `Last run: ${runChip(r)} ${ago(r.start)}${dur(r)}` : 'Never run'}</div></div>`;
   }).join('');
   return `<div class="page-head" style="margin-top:0"><h2 style="margin:0;display:flex;align-items:center;gap:8px">${I.deploy}Deploy</h2><span class="sub">Git and CI status are checked and shown before running.</span><span class="grow"></span><button class="btn primary" data-action="deploy-new">${I.plus}Add deploy</button></div>
@@ -164,11 +182,11 @@ function tabDeploy(p) {
 function tabBackup(p) {
   const cards = p.backups.map(b => {
     const r = lastRun(b.id, 'backup'), run = isRunning(b.id), files = (C.backups[b.id] && C.backups[b.id].files) || [];
-    return `<div class="card section">
-      <div class="row between"><h2 style="margin:0">${I.db}${esc(b.name)} ${chip(b.type === 'folder' ? 'Folder → zip' : 'Custom command', '')}${b.everyHours > 0 ? chip(`Every ${num(b.everyHours)} h`, 'soon', I.clock) : chip('Manual', '')}</h2>
+    return `<div class="card section" ${dndItem('backups', b.id)}>
+      <div class="row between"><h2 style="margin:0">${dndGrip}${I.db}${esc(b.name)} ${chip(b.type === 'folder' ? 'Files' : b.type === 'database' ? 'Database' : 'Other', '')}${b.everyHours > 0 ? chip(`Every ${num(b.everyHours)} h`, 'soon', I.clock) : chip('Manual', '')}</h2>
         <div class="row"><button class="iconbtn" data-action="open-folder" data-path="${esc(b.destDir)}" title="Open destination folder">${I.folder}</button><button class="iconbtn" data-action="backup-edit" data-id="${b.id}" title="Edit">${I.edit}</button>
         <button class="btn primary" data-action="backup-run" data-id="${b.id}" ${run ? 'disabled' : ''}>${I.play}${run ? 'Running…' : 'Back up now'}</button></div></div>
-      <div class="sub" style="margin:6px 0">${b.type === 'folder' ? esc(b.source) + ' → ' : ''}<code>${esc(b.destDir)}</code> · keeping ${b.keep ? 'last ' + num(b.keep) + ' copies' : 'all'}</div>
+      <div class="sub" style="margin:6px 0">${b.type === 'folder' ? esc(b.source) + ' → ' : b.type === 'database' ? esc((C.vault.find(x => x.id === b.dbId) || {}).label || '') + ' → ' : ''}<code>${esc(b.destDir)}</code> · keeping ${b.keep ? 'last ' + num(b.keep) + ' copies' : 'all'}</div>
       <div class="sub">${r ? `Last run: ${runChip(r)} ${ago(r.start)}${dur(r)}${r.size ? ' · ' + fmtSize(r.size) : ''}` : 'Never run'}</div>
       ${files.length ? `<details style="margin-top:10px" open><summary>Existing files (${num(files.length)})</summary><div class="files">${files.slice(0, 8).map(f => `<div class="row between"><code>${esc(f.name)}</code><span class="sub">${fmtSize(f.size)} · ${ago(f.ts)}</span></div>`).join('')}</div></details>` : ''}</div>`;
   }).join('');
@@ -186,12 +204,69 @@ function ciBranches(p) {
   const short = n => String(n).replace(/^[^/]+\//, '');
   return [...new Set(list.filter(b => b.isRemote || (b.upstream && !b.gone)).map(b => short(b.isRemote ? b.name : b.upstream)))];
 }
+/** The GitHub Actions file that does the "CI" half automatically, built from what is already set up in this project:
+ *  the Build and Test commands from Settings and the expected branches of the deploys */
+function ciYaml(p, det) {
+  const def = C.git[p.id] && C.git[p.id].default;
+  const branches = [...new Set([...p.deploys.map(d => d.branch), def, 'main'].filter(Boolean))].slice(0, 6);
+  const own = { build: p.build.command.trim(), test: p.test.command.trim() };
+  const win = det.kind === 'dotnet' || !!(own.build || own.test);
+  const ind = (txt, n) => txt.split(/\r?\n/).map(l => ' '.repeat(n) + l).join('\n');
+  const step = (name, cmd, shell) => `      - name: ${name}\n${shell ? `        shell: ${shell}\n` : ''}        run: |\n${ind(cmd, 10)}`;
+  const steps = ['      - uses: actions/checkout@v4'];
+  if (det.kind === 'node') steps.push('      - uses: actions/setup-node@v4\n        with:\n          node-version: 20\n          cache: npm', '      - run: npm ci');
+  if (det.kind === 'dotnet') steps.push('      - uses: actions/setup-dotnet@v4\n        with:\n          dotnet-version: 8.0.x', '      - run: dotnet restore');
+  const build = own.build ? [own.build, p.build.shell] : det.kind === 'node' ? (det.hasBuild ? ['npm run build', ''] : null) : det.kind === 'dotnet' ? ['dotnet build -c Release --no-restore', ''] : null;
+  const test = own.test ? [own.test, p.test.shell] : det.kind === 'node' ? (det.hasTest ? ['npm test', ''] : null) : det.kind === 'dotnet' ? ['dotnet test -c Release', ''] : null;
+  if (build) steps.push(step('Build', build[0], build[1]));
+  if (test) steps.push(step('Test', test[0], test[1]));
+  if (!build && !test) steps.push('      # TODO: no build or test command was found. Add your own steps here, or set the Build / Test commands in ProdKeeper Settings and create this file again.');
+  const vars = [p.build.envSpec, p.test.envSpec].join('\n').split(/\r?\n/).map(l => l.trim()).filter(l => /^[A-Za-z_]\w*=/.test(l)).map(l => { const i = l.indexOf('='), v = l.slice(i + 1); return `      ${l.slice(0, i)}: ${v.startsWith('@') ? '${{ secrets.' + l.slice(0, i) + ' }}' : JSON.stringify(v)}`; });
+  return `# Runs the build and tests on GitHub for every push, so ProdKeeper (CI/CD tab) can show whether the code is healthy.
+# Created by ProdKeeper from this project's Build / Test settings and its deploy branches.
+name: CI
+on:
+  push:
+    branches: [${branches.map(b => `'${b}'`).join(', ')}]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ${win ? 'windows-latest' : 'ubuntu-latest'}
+${vars.length ? `    env:\n${[...new Set(vars)].join('\n')}\n` : ''}    steps:
+${steps.join('\n')}
+`;
+}
+async function ciSetupModal() {
+  const p = proj(V.pid);
+  if (!p.repoPath) return toast('Set the git repository folder of the project first', true);
+  const det = await native.ci.detect(p.repoPath);
+  if (det.error) return toast(det.error, true);
+  const kinds = { node: 'Node.js project', dotnet: '.NET project', unknown: 'unknown project type' };
+  openModal(`<form id="ciYamlForm" data-pid="${p.id}">${modalHead('Create the CI workflow')}
+    <div class="body">
+      <div class="sub">Detected: <b>${kinds[det.kind]}</b>. The file <code>${det.file}</code> is built from the Build and Test commands in Settings and the expected branches of your deploys. You can edit it before it is created.</div>
+      ${det.exists ? `<div class="check-item warn">${I.alert}<span>${det.file} already exists. It will not be overwritten.</span></div>` : ''}
+      <div class="field"><textarea name="yaml" dir="ltr" spellcheck="false" style="min-height:300px;font-family:Consolas,monospace">${esc(ciYaml(p, det))}</textarea></div>
+      <div id="ciSecrets" class="sub"></div>
+      <div class="sub">After it is created, commit and push it from the Git tab. GitHub starts running it on the next push.</div>
+    </div><footer><span class="grow"></span><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" ${det.exists ? 'disabled' : ''}>Create file</button></footer></form>`, { wide: true });
+  const ta = $('#ciYamlForm textarea'), note = () => {
+    const names = [...new Set([...ta.value.matchAll(/secrets\.(\w+)/g)].map(m => m[1]))];
+    $('#ciSecrets').innerHTML = names.length ? `Add these as secrets in GitHub (Settings → Secrets and variables → Actions), with the same values as in your Vault: ${names.map(n => `<code>${esc(n)}</code>`).join(' ')}` : '';
+  };
+  ta.addEventListener('input', note); note();
+}
+/** The CI run for a commit (matched by its hash) or, for a branch, the newest run on it; null when GitHub has none or CI is not set up */
+const ciOfCommit = (p, hash) => { const c = C.ci[p.id]; return c && c.runs && hash ? c.runs.find(r => r.sha && r.sha.startsWith(hash)) || null : null; };
+const ciOfBranch = (p, name) => { const c = C.ci[p.id], n = String(name).replace(/^origin\//, ''); return c && c.runs ? c.runs.find(r => r.branch === n) || null : null; };
 function tabCI(p) {
-  if (!p.ci.repo) return notSet('The GitHub repository for CI is not set', `<p class="sub">Enter the repository as <code>owner/repo</code> in Settings (filled in automatically if your remote is on GitHub).</p><button class="btn primary" data-action="set-tab" data-tab="settings">Open settings</button>`);
+  if (!p.ci.repo) return notSet('The GitHub repository for CI is not set', `<p class="sub">Enter the repository as <code>owner/repo</code> in Settings (filled in automatically if your remote is on GitHub).</p><div class="row"><button class="btn primary" data-action="set-tab" data-tab="settings">Open settings</button>${p.repoPath ? `<button class="btn" data-action="ci-setup">${I.plus}Create the CI workflow file</button>` : ''}</div>`);
   const c = C.ci[p.id], wf = C.wf[p.id], g = C.git[p.id];
   const tokenInfo = p.ci.tokenId ? chip('With token', 'okc', I.key) : chip('No token (public repositories only)', 'today');
   const runs = c && c.runs ? c.runs.map(r => `<div class="trow" style="cursor:default">${ciBadge(r)}
     <span class="tt"><b>${esc(r.name)}</b> <span class="sub">${esc(r.title)}</span><div class="sub" style="font-size:12px">${chip(esc(r.branch || ''), '', I.branch)} ${esc(r.event)} · ${esc(r.actor || '')} · ${ago(r.started)}${r.status === 'completed' ? ' · ' + fmtSec((r.updated - r.started) / 1000) : ''}</div></span>
+    ${r.status === 'completed' && r.conclusion === 'success' ? p.deploys.filter(d => d.branch && d.branch === r.branch).map(d => `<button class="btn sm primary" data-action="deploy-run" data-id="${d.id}" title="Deploy this successful build">${I.deploy}Deploy: ${esc(d.name)}</button>`).join('') : ''}
     ${r.status !== 'completed' ? `<button class="btn sm" data-action="ci-cancel" data-id="${r.id}">Cancel</button>` : `<button class="btn sm" data-action="ci-rerun" data-id="${r.id}" data-failed="${r.conclusion === 'failure' ? 1 : 0}">Re-run${r.conclusion === 'failure' ? ' (failed jobs)' : ''}</button>`}
     <button class="iconbtn" data-action="open-url" data-url="${esc(r.url)}" title="Open on GitHub">${I.ext}</button></div>`).join('') : '';
   const refs = ciBranches(p), pick = [g && g.branch, g && g.default].find(b => refs.includes(b)) || refs[0];
@@ -200,15 +275,23 @@ function tabCI(p) {
     ${refs.length ? `<select id="wfRef" dir="ltr">${refs.map(b => `<option ${b === pick ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select>` : '<select id="wfRef" disabled><option>No branches on GitHub yet</option></select>'}
     <button class="btn primary" data-action="ci-dispatch" ${refs.length ? '' : 'disabled'}>${I.play}Run</button></div>
     <div class="sub" style="margin-top:6px">Only workflows that have <code>workflow_dispatch</code> can be run manually. The token needs <code>actions:write</code> access.</div></div>` : '';
+  const pipelines = p.deploys.length ? `<div class="card section" style="margin-bottom:16px"><h2>Pipelines</h2>
+    <div class="sub" style="margin-bottom:10px">Each deploy as one flow: tests, then CI on GitHub, then the deploy, then the site check. Set it up in the Deploy tab (edit a deploy).</div>
+    <div class="stack">${p.deploys.map(d => `<div class="row between"><div><b>${esc(d.name)}</b> ${d.branch ? chip(esc(d.branch), '', I.branch) : ''}<div style="margin-top:6px">${pipelineStrip(p, d)}</div></div>
+      <button class="btn sm" data-action="deploy-run" data-id="${d.id}" ${isRunning(d.id) ? 'disabled' : ''}>${I.deploy}Deploy</button></div>`).join('')}</div></div>` : '';
+  const noWf = wf && wf.workflows && !wf.workflows.length && p.repoPath;
   return `<div class="page-head" style="margin-top:0"><b>${esc(p.ci.repo)}</b>${tokenInfo}<span class="grow"></span>
+      ${noWf ? `<button class="btn primary" data-action="ci-setup">${I.plus}Create the CI workflow file</button>` : ''}
       <button class="btn" data-action="open-url" data-url="https://github.com/${esc(p.ci.repo)}/actions">${I.ext}GitHub Actions</button><button class="btn" data-action="ci-refresh">${I.refresh}Refresh</button></div>
+    ${noWf ? `<div class="alert warn">${I.alert}<span>No GitHub Actions workflow exists in this repository yet, so nothing is tested automatically. Create the workflow file, commit it and push.</span></div>` : ''}
+    ${pipelines}
     ${dispatch}
     <div class="card section"><h2>Recent runs</h2>${!c ? '<div class="sub">Loading…</div>' : c.error ? `<div class="alert bad">${I.alert}<span>${esc(c.error)}</span></div>` : runs || '<div class="sub">No runs recorded yet</div>'}</div>`;
 }
 
 /* ---------- History ---------- */
 function histRow(h) {
-  const p = proj(h.projectId), kind = { deploy: 'Deploy', backup: 'Backup', dbupdate: 'Database update', publish: 'Publish', git: 'Git', run: 'Run', build: 'Build' }[h.kind] || h.kind;
+  const p = proj(h.projectId), kind = { deploy: 'Deploy', backup: 'Backup', dbupdate: 'Database update', publish: 'Publish', git: 'Git', run: 'Run', build: 'Build', test: 'Test' }[h.kind] || h.kind;
   return `<div class="trow" data-action="log-open" data-id="${h.id}">${runChip(h)}<span class="tt">${esc(h.title)}</span>
     ${p ? chip(esc(p.name), '') : ''}<span class="sub">${fmtTs(h.start)}${dur(h)}</span></div>`;
 }
@@ -216,7 +299,7 @@ function viewHistory() {
   let list = S.history.filter(h => (!V.hKind || h.kind === V.hKind) && (!V.hProj || h.projectId === V.hProj));
   const sel = (k, opts, val) => `<select data-hf="${k}">${opts.map(([v, l]) => `<option value="${v}" ${String(v) === String(val) ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
   return `<div class="page-head"><h1>Operation history</h1><span class="sub">${num(list.length)} ${list.length === 1 ? 'entry' : 'entries'}</span><span class="grow"></span><button class="btn danger" data-action="hist-clear">Clear</button></div>
-    <div class="filters">${sel('hKind', [['', 'All types'], ['deploy', 'Deploy'], ['backup', 'Backup'], ['dbupdate', 'Database update'], ['publish', 'Publish'], ['git', 'Git'], ['run', 'Run'], ['build', 'Build']], V.hKind)}
+    <div class="filters">${sel('hKind', [['', 'All types'], ['deploy', 'Deploy'], ['backup', 'Backup'], ['dbupdate', 'Database update'], ['publish', 'Publish'], ['git', 'Git'], ['run', 'Run'], ['build', 'Build'], ['test', 'Test']], V.hKind)}
     ${sel('hProj', [['', 'All projects'], ...S.projects.map(p => [p.id, p.name])], V.hProj)}</div>
     <div class="card section">${list.length ? list.slice(0, 150).map(histRow).join('') : '<div class="empty">No operations recorded yet</div>'}</div>`;
 }
@@ -360,6 +443,7 @@ function requestModal() {
   const p = proj(V.pid), e = p.envs.find(x => x.url || x.checkUrl) || {};
   openModal(`<form id="reqForm">${modalHead('Send a custom request')}
     <div class="body">
+      ${p.envs.some(x => x.url || x.checkUrl) ? `<div class="field"><label>Site (from this project's Websites; you can also type any URL below)</label><select name="envPick">${p.envs.filter(x => x.url || x.checkUrl).map(x => `<option value="${esc(x.checkUrl || x.url)}">${esc(x.name || x.url)}${x.checkUrl ? ' (health URL)' : ''}</option>`).join('')}</select></div>` : ''}
       <div class="folder-row"><select name="method" style="width:110px">${['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'].map(m => `<option>${m}</option>`).join('')}</select><input type="text" name="url" dir="ltr" value="${esc(e.checkUrl || e.url || '')}" placeholder="https://example.com/api/status"></div>
       <div class="field"><label>Headers (one Name: value per line — for secrets: <code>Authorization: Bearer @label</code>)</label><textarea name="headers" dir="ltr" style="min-height:56px;font-family:Consolas,monospace"></textarea></div>
       <div class="field"><label>Request body (for POST/PUT/PATCH)</label><textarea name="body" dir="ltr" style="min-height:56px;font-family:Consolas,monospace"></textarea></div>
@@ -407,6 +491,10 @@ function tabSettings(p) {
       ${cmdArea('Command', 'command', p.build.command, 'dotnet build BetaPro.sln -c Release')}
       <div class="two">${shellField(p.build.shell)}<div></div></div>
       ${envArea(p.id, p.build.envSpec, '', 40, p.build.dbId)}`)}
+    ${setCard('testForm', p, I.tick, 'Test', 'The Test button on this page, and the tests a deploy can run first. It runs in the repository folder; the command must exit with a non-zero code when a test fails.', `
+      ${cmdArea('Command', 'command', p.test.command, 'dotnet test BetaPro.sln -c Release')}
+      <div class="two">${shellField(p.test.shell)}<div></div></div>
+      ${envArea(p.id, p.test.envSpec, '', 40, p.test.dbId)}`)}
     ${setCard('envForm', p, I.globe, 'Websites and monitoring', 'The production / staging URLs. They are checked for health, SSL expiry and uptime.', `
       <div id="envRows" class="stack-sm">${(p.envs.length ? p.envs : [{}]).map(envRow).join('')}</div><button type="button" class="btn sm" data-action="row-add" style="justify-self:start">${I.plus}Website</button>`)}
     ${setCard('ciForm', p, I.activity, 'GitHub CI/CD', 'Filled in automatically when the git remote is on GitHub. A token is needed for private repositories and for re-run / cancel / dispatch.', `
@@ -415,19 +503,43 @@ function tabSettings(p) {
   </div>`;
 }
 
-function deployModal(did) {
-  const p = proj(V.pid), d = did ? p.deploys.find(x => x.id === did) : { name: '', command: '', shell: 'cmd', cwd: '', branch: 'main', envId: '', envSpec: '', noHealth: false };
+/** Local branch names of a project's repository, read fresh so a dropdown never offers stale branches */
+async function localBranches(p) {
+  if (!p.repoPath) return [];
+  const r = await native.git('branches', p.repoPath);
+  return r.error || !r.branches ? [] : r.branches.filter(b => !b.isRemote).map(b => b.name);
+}
+/** A branch dropdown; a saved branch that no longer exists is kept as an option so saving the form does not silently drop it */
+const branchSelect = (name, cur, names, none, attrs = '') => {
+  const list = cur && !names.includes(cur) ? [...names, cur] : names;
+  return `<select name="${name}" dir="ltr" ${attrs}><option value="">${none}</option>${list.map(n => `<option value="${esc(n)}" ${n === cur ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
+};
+
+async function deployModal(did) {
+  const p = proj(V.pid), names = await localBranches(p), g = C.git[p.id];
+  const d = did ? p.deploys.find(x => x.id === did) : { name: '', command: '', shell: 'cmd', cwd: '', branch: names.includes('main') ? 'main' : (g && g.branch) || '', envId: '', envSpec: '', noHealth: false, preTest: false, ciGate: 'warn', auto: false };
+  const gate = d.ciGate || 'warn';
   openModal(`<form id="deployForm" data-pid="${p.id}" data-id="${did || ''}">${modalHead(did ? 'Edit deploy' : 'Add deploy')}
     <div class="body">
       <div class="two"><div class="field"><label>Name</label><input type="text" name="name" value="${esc(d.name)}" required placeholder="Production"></div>
         <div class="field"><label>Target environment</label><select name="envId"><option value="">—</option>${p.envs.map(e => `<option value="${e.id}" ${d.envId === e.id ? 'selected' : ''}>${esc(e.name || e.url)}</option>`).join('')}</select></div></div>
       <div class="field"><label>Command</label><textarea name="command" dir="ltr" style="min-height:80px;font-family:Consolas,monospace" required>${esc(d.command)}</textarea>
         <div class="row">${TEMPLATES.map((t, i) => `<button type="button" class="btn sm" data-action="tpl" data-i="${i}">${t.t}</button>`).join('')}</div></div>
-      <div class="two"><div class="field"><label>Expected branch (warns before running)</label><input type="text" name="branch" value="${esc(d.branch)}" dir="ltr"></div>
+      <div class="two"><div class="field"><label>Expected branch (warns before running)</label>${branchSelect('branch', d.branch, names, '— Any branch (no check) —')}</div>
         <div class="field"><label>Shell</label>${shellSel(d.shell)}</div></div>
       ${folderField('Working folder (default: repository folder)', 'cwd', d.cwd, '')}
       ${envArea(p.id, d.envSpec, 'API_KEY=@my-token', 60, d.dbId)}
       <label class="chk"><input type="checkbox" name="health" ${d.noHealth ? '' : 'checked'}> After a successful deploy, check the health of the target environment's site</label>
+      <div class="field"><label>Pipeline: CI must pass on the expected branch</label><select name="ciGate">
+        <option value="warn" ${gate === 'warn' ? 'selected' : ''}>Warn if the last CI run is not green</option>
+        <option value="block" ${gate === 'block' ? 'selected' : ''}>Block the deploy unless the last CI run is green</option>
+        <option value="off" ${gate === 'off' ? 'selected' : ''}>Do not look at CI</option></select></div>
+      <div class="field"><label>Pipeline: backup first (if it fails, the deploy does not run)</label><select name="backupId"><option value="">— No backup —</option>${p.backups.map(b => `<option value="${b.id}" ${d.backupId === b.id ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}</select>
+        ${p.backups.length ? '' : '<div class="sub">First define a backup in the "Backup" tab.</div>'}</div>
+      <div class="two"><div class="field"><label>Pipeline: publish first</label><select name="publishId"><option value="">— None —</option>${p.ops.filter(o => o.type === 'publish').map(o => `<option value="${o.id}" ${d.publishId === o.id ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Pipeline: database update first</label><select name="dbUpdateId"><option value="">— None —</option>${p.ops.filter(o => o.type === 'db').map(o => `<option value="${o.id}" ${d.dbUpdateId === o.id ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select></div></div>
+      <label class="chk"><input type="checkbox" name="preTest" ${d.preTest ? 'checked' : ''}> Run the project's tests first (Settings → Test); a failing test stops the deploy</label>
+      <label class="chk"><input type="checkbox" name="auto" ${d.auto ? 'checked' : ''}> Deploy automatically when CI succeeds on the expected branch (only while this app is open and unlocked)</label>
     </div>${footerBtns(did ? `<button type="button" class="btn danger" data-action="deploy-del" data-id="${did}">${I.trash}Delete</button>` : '')}</form>`);
 }
 
@@ -436,25 +548,34 @@ function backupModal(bid) {
   openModal(`<form id="backupForm" data-pid="${p.id}" data-id="${bid || ''}">${modalHead(bid ? 'Edit backup' : 'Add backup')}
     <div class="body">
       <div class="two"><div class="field"><label>Name (used in file names)</label><input type="text" name="name" value="${esc(b.name)}" required placeholder="files"></div>
-        <div class="field"><label>Type</label><select name="type"><option value="folder" ${b.type === 'folder' ? 'selected' : ''}>Compress a folder (zip)</option><option value="command" ${b.type === 'command' ? 'selected' : ''}>Custom command (database, etc.)</option></select></div></div>
+        <div class="field"><label>Type</label><select name="type"><option value="folder" ${b.type === 'folder' ? 'selected' : ''}>Files</option><option value="database" ${b.type === 'database' ? 'selected' : ''}>Database</option><option value="command" ${b.type === 'command' ? 'selected' : ''}>Other</option></select></div></div>
       <div class="bk-folder">${folderField('Source folder', 'source', b.source, '')}
-        <div class="field" style="margin-top:12px"><label>Exclusions (comma-separated)</label><input type="text" name="exclude" value="${esc(b.exclude)}" dir="ltr"></div></div>
+        <div class="field"><label>Exclusions (comma-separated)</label><input type="text" name="exclude" value="${esc(b.exclude)}" dir="ltr"></div></div>
+      <div class="bk-db">${dbBackupField(p.id, b.dbId)}</div>
       <div class="bk-cmd"><div class="field"><label>Backup command</label><textarea name="command" dir="ltr" style="min-height:70px;font-family:Consolas,monospace" placeholder='mysqldump -u root mydb > "%BACKUP_DIR%\\%BACKUP_PREFIX%-%BACKUP_STAMP%.sql"'>${esc(b.command)}</textarea>
         <div class="sub">The output must be named <code>%BACKUP_DIR%\\%BACKUP_PREFIX%-%BACKUP_STAMP%.ext</code> so that retention of old copies works.</div></div>
-        <div class="two" style="margin-top:12px"><div class="field"><label>Shell</label>${shellSel(b.shell)}</div><div></div></div>
-        ${folderField('Working folder (optional)', 'cwd', b.cwd, '')}</div>
+        <div class="two"><div class="field"><label>Shell</label>${shellSel(b.shell)}</div><div></div></div>
+        ${folderField('Working folder (optional)', 'cwd', b.cwd, '')}
+        <div>${envArea(p.id, b.envSpec, 'MYSQL_PWD=@db-password', 50, b.dbId)}</div></div>
       ${folderField('Backup destination folder', 'destDir', b.destDir, 'D:\\Backups\\my-app')}
       <div class="two"><div class="field"><label>Copies to keep (0 = all)</label><input type="number" name="keep" min="0" value="${b.keep}"></div>
         <div class="field"><label>Run automatically every N hours (0 = manual)</label><input type="number" name="everyHours" min="0" value="${b.everyHours}"></div></div>
-      ${envArea(p.id, b.envSpec, 'MYSQL_PWD=@db-password', 50, b.dbId)}
     </div>${footerBtns(bid ? `<button type="button" class="btn danger" data-action="backup-del" data-id="${bid}">${I.trash}Delete</button>` : '')}</form>`);
   syncBackupType();
+}
+/** The database a "Database" backup is taken from (a SQL Server connection string kept in the Vault) */
+function dbBackupField(pid, sel) {
+  const items = C.vault.filter(x => x.kind === 'db' && x.hasSecret && (x.projectId === pid || x.projectId === ''));
+  if (!items.length) return '<div class="check-item warn">' + I.alert + '<span>Add an item of type Database (a SQL Server connection string) to the Vault first.</span></div>';
+  return `<div class="field"><label>Database</label><select name="dbPick">${items.map(x => `<option value="${x.id}" ${sel === x.id ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}</select>
+    <div class="sub">SQL Server only. The backup is taken with sqlcmd using this connection string.</div></div>`;
 }
 function syncBackupType() {
   const f = $('#backupForm');
   if (!f) return;
   const t = f.elements.type.value;
   f.querySelector('.bk-folder').hidden = t !== 'folder';
+  f.querySelector('.bk-db').hidden = t !== 'database';
   f.querySelector('.bk-cmd').hidden = t !== 'command';
 }
 

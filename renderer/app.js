@@ -16,6 +16,7 @@ const normProject = p => normTasks({
   ci: { repo: '', tokenId: '', ...(p.ci || {}) },
   run: { command: '', shell: 'cmd', url: '', envSpec: '', dbId: '', ...(p.run || {}) },
   build: { command: '', shell: 'cmd', envSpec: '', dbId: '', ...(p.build || {}) },
+  test: { command: '', shell: 'cmd', envSpec: '', dbId: '', ...(p.test || {}) },
   sprints: Array.isArray(p.sprints) ? p.sprints : [],
   taskSeq: p.taskSeq || 0,
 });
@@ -95,9 +96,12 @@ const lastRun = (refId, kind) => S.history.find(h => h.refId === refId && (!kind
 const isRunning = refId => Object.values(RUN).some(r => r.h.refId === refId && r.h.status === 'running');
 
 /* ======================= Loading statuses ======================= */
+/** "owner/repo" of a GitHub remote URL, or '' */
+const ghRepoOf = remote => { const m = String(remote || '').match(/github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/); return m ? m[1] : ''; };
 async function loadGit(p) {
   if (!p.repoPath) { delete C.git[p.id]; return; }
-  C.git[p.id] = await native.git('status', p.repoPath);
+  const g = C.git[p.id] = await native.git('status', p.repoPath);
+  if (!p.ci.repo && g && !g.error && ghRepoOf(g.remote)) { p.ci.repo = ghRepoOf(g.remote); save(); } // the CI repository is taken from the git remote instead of being typed
 }
 async function loadGitDetail(p) {
   if (!p.repoPath) return;
@@ -108,6 +112,22 @@ const ciCfg = p => ({ repo: p.ci.repo, tokenId: p.ci.tokenId || '' });
 async function loadCI(p) {
   if (!p.ci.repo) { delete C.ci[p.id]; return; }
   C.ci[p.id] = { ...(await native.ci.runs(ciCfg(p), null)), at: Date.now() };
+  checkAutoDeploy(p);
+}
+/** A deploy with "Deploy automatically" on runs when the newest CI run on its branch has succeeded: once per CI run, and only for runs that finished after the switch was turned on */
+function checkAutoDeploy(p) {
+  const c = C.ci[p.id];
+  if (!c || !c.runs || locking) return;
+  for (const d of p.deploys) {
+    if (!d.auto || !d.branch || isRunning(d.id)) continue;
+    const runs = c.runs.filter(r => r.branch === d.branch);
+    if (!runs.length || runs.some(r => r.status !== 'completed')) continue;
+    const r = runs[0];
+    if (r.conclusion !== 'success' || r.id === d.autoRunId || r.updated < (d.autoSince || 0)) continue;
+    d.autoRunId = r.id; save();
+    toast(`CI passed on ${d.branch}: deploying "${d.name}" automatically`);
+    runPipeline(p, d, { auto: true });
+  }
 }
 async function loadWf(p) { if (p.ci.repo) C.wf[p.id] = await native.ci.workflows(ciCfg(p)); }
 /** Sends a request to an environment's monitoring URL and records the result in memory and in the light history (for uptime) */
@@ -145,7 +165,7 @@ async function enterTab() {
   const t = V.tab, jobs = [loadGit(p)];
   if (t === 'git' || t === 'ci') jobs.push(loadGitDetail(p));
   if (t === 'tasks') jobs.push(loadTaskBranches(p));
-  if (t === 'ci' || t === 'tasks') jobs.push(loadCI(p));
+  if (t === 'ci' || t === 'tasks' || t === 'git') jobs.push(loadCI(p));
   if (t === 'ci') jobs.push(loadWf(p));
   if (t === 'status') jobs.push(loadHealth(p));
   if (t === 'backup') p.backups.forEach(b => jobs.push(loadBackups(b)));
@@ -372,10 +392,50 @@ function backupSpec(p, b) {
 }
 const runBackup = (p, b, silent, auto) => runJob({ pid: p.id, kind: 'backup', refId: b.id, title: `Backup: ${b.name}`, spec: backupSpec(p, b), silent, auto });
 
+/** Warnings for expired or soon-to-expire vault items this pipeline uses: the CI token and any NAME=@label in the deploy / test / build variables */
+function vaultWarnings(p, d) {
+  const labels = [d.envSpec, p.test.envSpec, p.build.envSpec].join('\n').split(/\r?\n/).map(l => (l.match(/^\s*\w+\s*=\s*@(.+?)\s*$/) || [])[1]).filter(Boolean);
+  const used = [...new Set(labels)].map(l => C.vault.find(v => v.label === l && (v.projectId === p.id || v.projectId === ''))), out = [];
+  if (p.ci.tokenId) used.push(C.vault.find(v => v.id === p.ci.tokenId));
+  for (const v of used) {
+    if (!v || !v.expires) continue;
+    const n = diffDays(v.expires);
+    if (n < 0) out.push(['warn', `"${v.label}" in the vault has expired`]);
+    else if (n <= 7) out.push(['warn', `"${v.label}" in the vault expires in ${num(n)} days`]);
+  }
+  return out;
+}
+const testSpec = p => ({ command: p.test.command, shell: p.test.shell, cwd: p.repoPath || '', envSpec: p.test.envSpec, dbId: p.test.dbId });
+const runTests = (p, opts = {}) => runJob({ pid: p.id, kind: 'test', refId: p.id + ':test', title: `Test: ${p.name}`, spec: testSpec(p), ...opts });
+/** The deploy as one pipeline: the project's tests first (if the deploy asks for them), then the deploy itself; a failing test stops it */
+async function runPipeline(p, d, { auto } = {}) {
+  if (d.preTest && p.test.command) {
+    const t = await runTests(p, { silent: auto, auto });
+    if (!t || t.status !== 'ok') return toast(`Deploy "${d.name}" stopped: ${t ? 'the tests failed' : 'the tests could not start'}`, true);
+  }
+  const bk = d.backupId && p.backups.find(x => x.id === d.backupId);
+  if (bk) {
+    const b = await runBackup(p, bk, auto, auto);
+    if (!b || b.status !== 'ok') return toast(`Deploy "${d.name}" stopped: the backup "${bk.name}" ${b ? 'failed' : 'could not start'}`, true);
+  }
+  const pub = d.publishId && p.ops.find(x => x.id === d.publishId && x.type === 'publish');
+  if (pub) {
+    const r = await runOp(p, pub, { silent: auto, auto });
+    if (!r || r.status !== 'ok') return toast(`Deploy "${d.name}" stopped: publishing "${pub.name}" ${r ? 'failed' : 'could not start'}`, true);
+  }
+  const dbu = d.dbUpdateId && p.ops.find(x => x.id === d.dbUpdateId && x.type === 'db');
+  if (dbu) {
+    const r = await runDbUpdate(p, dbu, !bk, { silent: auto, auto }); // the deploy's own backup, when there is one, already covers the update
+    if (!r || r.status !== 'ok') return toast(`Deploy "${d.name}" stopped: the database update "${dbu.name}" ${r ? 'failed' : 'did not run'}`, true);
+  }
+  return runJob({ pid: p.id, kind: 'deploy', refId: d.id, title: `Deploy: ${d.name}${auto ? ' (after CI)' : ''}`, spec: deploySpec(p, d), silent: auto, auto });
+}
+
 /** Pre-deploy checks: branch, uncommitted changes, unpushed commits, CI status */
 async function deployClick(pid, did) {
   const p = proj(pid), d = p.deploys.find(x => x.id === did);
   const items = [];
+  let blocked = false;
   if (p.repoPath) {
     await loadGit(p);
     const g = C.git[pid];
@@ -388,21 +448,36 @@ async function deployClick(pid, did) {
       if (!g.dirty && !g.ahead && !g.behind) items.push(['ok', 'The repository is clean and in sync with the remote']);
     } else if (g) items.push(['warn', 'Could not read git status: ' + g.error]);
   }
-  if (p.ci.repo) {
+  if (p.ci.repo && d.ciGate !== 'off') {
     const r = await native.ci.runs(ciCfg(p), d.branch || (C.git[pid] && C.git[pid].branch) || null);
+    const gate = d.ciGate === 'block';
     if (r.runs && r.runs[0]) {
       const x = r.runs[0];
       if (x.status !== 'completed') items.push(['warn', `CI is still running (${x.name})`]);
       else if (x.conclusion === 'success') items.push(['ok', `The last CI run succeeded (${x.name}, ${ago(x.updated)})`]);
       else items.push(['warn', `The last CI run ended with "${x.conclusion}" (${x.name})`]);
-    } else if (r.error) items.push(['warn', 'Could not read CI status: ' + r.error]);
+      const g = C.git[pid], head = g && !g.error && g.branch === (d.branch || g.branch) && g.last && g.last.hash;
+      if (head && x.sha && !x.sha.startsWith(head)) items.push(['warn', `The CI result is for an older commit (${x.sha.slice(0, 7)}); the current commit is ${head}`]);
+      if (gate && !(x.status === 'completed' && x.conclusion === 'success')) blocked = true;
+    } else if (r.error) { items.push(['warn', 'Could not read CI status: ' + r.error]); blocked = gate; }
+    else if (gate) { items.push(['warn', 'There is no CI run on this branch yet']); blocked = true; }
   }
+  if (d.preTest && p.test.command) items.push(['ok', 'The project tests run first; the deploy stops if they fail']);
+  else if (d.preTest) items.push(['warn', 'This deploy should run tests first, but no test command is set (Settings → Test)']);
+  if (d.backupId) {
+    const bk = p.backups.find(x => x.id === d.backupId);
+    items.push(bk ? ['ok', `Backup "${bk.name}" is taken first; the deploy stops if it fails`] : ['warn', 'The backup chosen for this deploy no longer exists']);
+  }
+  const pub = d.publishId && p.ops.find(x => x.id === d.publishId), dbu = d.dbUpdateId && p.ops.find(x => x.id === d.dbUpdateId);
+  if (pub) items.push(['ok', `Publish "${pub.name}" runs first; the deploy stops if it fails`]);
+  if (dbu) items.push(d.backupId || dbu.backupId ? ['ok', `Database update "${dbu.name}" runs before the deploy, after a backup`] : ['warn', `Database update "${dbu.name}" runs before the deploy and no backup is set, so it is applied without a backup copy`]);
+  items.push(...vaultWarnings(p, d));
   const warn = items.some(i => i[0] === 'warn');
   const env = p.envs.find(e => e.id === d.envId);
   openModal(`<header><span>Deploy "${esc(d.name)}"${env ? ' to ' + esc(env.name) : ''}</span><button class="iconbtn" data-action="close">${I.x}</button></header>
     <div class="body">${items.length ? items.map(([k, t]) => `<div class="check-item ${k}">${k === 'ok' ? I.tick : I.alert}<span>${esc(t)}</span></div>`).join('') : '<div class="sub">No automatic checks are configured.</div>'}
       <code class="cmd">${esc(d.command)}</code></div>
-    <footer><button class="btn ${warn ? 'danger' : 'primary'}" data-action="deploy-go" data-id="${did}">${warn ? 'Run anyway' : 'Run'}</button><span class="grow"></span><button class="btn" data-action="close">Cancel</button></footer>`, { small: true });
+    <footer>${blocked ? `<span class="sub">Blocked: this deploy requires a successful CI run.</span>` : `<button class="btn ${warn ? 'danger' : 'primary'}" data-action="deploy-go" data-id="${did}">${warn ? 'Run anyway' : 'Run'}</button>`}<span class="grow"></span><button class="btn" data-action="close">Cancel</button></footer>`, { small: true });
 }
 
 /* ======================= Git ======================= */
@@ -453,8 +528,7 @@ async function saveProject(form) {
   else { p = normProject({ id: uid(), createdAt: Date.now(), ...data }); S.projects.push(p); }
   if (p.repoPath && !p.ci.repo) {
     const st = await native.git('status', p.repoPath);
-    const m = st && st.remote && st.remote.match(/github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?$/);
-    if (m) p.ci.repo = m[1];
+    p.ci.repo = ghRepoOf(st && st.remote);
   }
   save(); closeModal();
   if (!id) openProject(p.id); else { render(); enterTab(); }
@@ -465,6 +539,7 @@ function saveProjSettings(form) {
   const p = proj(form.dataset.pid), fd = new FormData(form), v = n => String(fd.get(n) ?? '').trim();
   if (form.id === 'runForm') p.run = { command: v('command'), url: v('url'), shell: v('shell'), envSpec: v('envSpec'), dbId: v('dbId') };
   else if (form.id === 'buildForm') p.build = { command: v('command'), shell: v('shell'), envSpec: v('envSpec'), dbId: v('dbId') };
+  else if (form.id === 'testForm') p.test = { command: v('command'), shell: v('shell'), envSpec: v('envSpec'), dbId: v('dbId') };
   else if (form.id === 'envForm') {
     form.querySelectorAll('.envrow').forEach(r => { if (!r.dataset.id) r.dataset.id = uid(); }); // keep ids stable if this form is not re-rendered
     p.envs = readRows(form, '.envrow', ['name', 'url', 'checkUrl', 'method', 'expect', 'keyword', 'headers']).filter(e => e.name || e.url);
@@ -477,8 +552,11 @@ function saveDeploy(form) {
   const fd = new FormData(form), p = proj(form.dataset.pid), did = form.dataset.id;
   const name = String(fd.get('name')).trim(), command = String(fd.get('command')).trim();
   if (!name || !command) return;
-  const data = { name, command, envId: fd.get('envId'), shell: fd.get('shell'), cwd: String(fd.get('cwd')).trim(), branch: String(fd.get('branch')).trim(), envSpec: String(fd.get('envSpec') ?? '').trim(), dbId: String(fd.get('dbId') || ''), noHealth: !fd.get('health') };
-  if (did) Object.assign(p.deploys.find(x => x.id === did), data); else p.deploys.push({ id: uid(), ...data });
+  const data = { name, command, envId: fd.get('envId'), shell: fd.get('shell'), cwd: String(fd.get('cwd')).trim(), branch: String(fd.get('branch')).trim(), envSpec: String(fd.get('envSpec') ?? '').trim(), dbId: String(fd.get('dbId') || ''), noHealth: !fd.get('health'),
+    preTest: !!fd.get('preTest'), backupId: String(fd.get('backupId') || ''), publishId: String(fd.get('publishId') || ''), dbUpdateId: String(fd.get('dbUpdateId') || ''), ciGate: fd.get('ciGate'), auto: !!fd.get('auto') && !!String(fd.get('branch')).trim() };
+  const old = did && p.deploys.find(x => x.id === did);
+  if (data.auto && !(old && old.auto)) data.autoSince = Date.now(); // only CI runs that finish after this switch is turned on can trigger it
+  if (old) Object.assign(old, data); else p.deploys.push({ id: uid(), ...data });
   save(); closeModal(); render(); toast('Saved');
 }
 function saveBackup(form) {
@@ -490,6 +568,8 @@ function saveBackup(form) {
     shell: fd.get('shell'), cwd: String(fd.get('cwd')).trim(), exclude: String(fd.get('exclude')).trim(),
     keep: Math.max(0, Math.round(Number(fd.get('keep')) || 0)), everyHours: Math.max(0, Number(fd.get('everyHours')) || 0), envSpec: String(fd.get('envSpec') ?? '').trim(), dbId: String(fd.get('dbId') || ''),
   };
+  if (data.type === 'database') { data.dbId = String(fd.get('dbPick') || ''); data.envSpec = ''; if (!data.dbId) return toast('Choose a database', true); }
+  if (data.type === 'folder') { data.dbId = ''; data.envSpec = ''; } // a zip backup never uses a database
   if (data.type === 'folder' && !data.source) return toast('Set the source folder', true);
   if (data.type === 'command' && !data.command) return toast('Enter the backup command', true);
   let b;
@@ -592,8 +672,8 @@ const actions = {
   'deploy-run': el => deployClick(V.pid, el.dataset.id),
   'deploy-go': el => {
     closeModal();
-    const p = proj(V.pid), d = p.deploys.find(x => x.id === el.dataset.id);
-    runJob({ pid: p.id, kind: 'deploy', refId: d.id, title: `Deploy: ${d.name}`, spec: deploySpec(p, d) });
+    const p = proj(V.pid);
+    runPipeline(p, p.deploys.find(x => x.id === el.dataset.id));
   },
   'deploy-del': async el => {
     if (!(await askConfirm('Delete this deploy definition?'))) return;
@@ -614,6 +694,7 @@ const actions = {
   'btype': () => syncBackupType(),
 
   /* CI/CD */
+  'ci-setup': () => ciSetupModal(),
   'ci-refresh': async () => { const p = proj(V.pid); await Promise.all([loadCI(p), loadWf(p)]); softRender(); },
   'ci-rerun': async el => {
     const r = await native.ci.action(ciCfg(proj(V.pid)), el.dataset.failed === '1' ? 'rerunFailed' : 'rerun', { runId: Number(el.dataset.id) });
@@ -649,6 +730,13 @@ const actions = {
     const p = proj(V.pid);
     if (!p.build.command) { toast('Set the build command first', true); return actions['set-tab']({ dataset: { tab: 'settings' } }); }
     runJob({ pid: p.id, kind: 'build', refId: p.id + ':build', title: `Build: ${p.name}`, spec: { command: p.build.command, shell: p.build.shell, cwd: p.repoPath || '', envSpec: p.build.envSpec, dbId: p.build.dbId } });
+    const closeRun = onModalClose;
+    onModalClose = () => { if (closeRun) closeRun(); render(); };
+  },
+  'app-test': () => {
+    const p = proj(V.pid);
+    if (!p.test.command) { toast('Set the test command first', true); return actions['set-tab']({ dataset: { tab: 'settings' } }); }
+    runTests(p);
     const closeRun = onModalClose;
     onModalClose = () => { if (closeRun) closeRun(); render(); };
   },
@@ -716,6 +804,10 @@ document.addEventListener('click', e => {
 document.addEventListener('mousedown', e => { if (e.target.id === 'modal') closeModal(); if (e.button === 3 || e.button === 4) e.preventDefault(); });
 document.addEventListener('mouseup', e => { if (e.button === 3 || e.button === 4) { e.preventDefault(); navMove(e.button === 3 ? -1 : 1); } });
 document.addEventListener('keydown', e => { if (e.altKey && !e.ctrlKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) { e.preventDefault(); navMove(e.key === 'ArrowLeft' ? -1 : 1); } });
+// Custom request: choosing a site fills in its URL
+document.addEventListener('change', e => {
+  if (e.target.name === 'envPick' && e.target.form && e.target.form.id === 'reqForm') e.target.form.elements.url.value = e.target.value;
+});
 document.addEventListener('submit', async e => {
   e.preventDefault();
   const f = e.target;
@@ -723,6 +815,12 @@ document.addEventListener('submit', async e => {
   else if (f.classList.contains('setf')) saveProjSettings(f);
   else if (f.id === 'deployForm') saveDeploy(f);
   else if (f.id === 'backupForm') saveBackup(f);
+  else if (f.id === 'ciYamlForm') {
+    const p = proj(f.dataset.pid), r = await native.ci.scaffold(p.repoPath, f.elements.yaml.value);
+    if (r.error) return toast(r.error, true);
+    closeModal(); toast(`Created ${r.file}: commit and push it from the Git tab`);
+    actions['set-tab']({ dataset: { tab: 'git' } });
+  }
   else if (f.id === 'vaultForm') saveVault(f);
   else if (f.id === 'reqForm') sendRequest(f);
   else if (f.id === 'pwForm') {
@@ -877,9 +975,8 @@ function lockScreen(st) {
     const f = $('#lockScreenForm');
     f.elements.pw.focus();
     const finish = () => { el.hidden = true; host.innerHTML = ''; resolve(); };
-    const say = text => { $('#lockErr').textContent = text; };
+    const say = (text, info) => { const e = $('#lockErr'); e.textContent = text; e.classList.toggle('info', !!info); }; // errors are red, progress text is muted
     if (st.waitSec) say(`Too many failed attempts; wait ${num(st.waitSec)} seconds`);
-    else say(setup ? 'hi! create a master password for me to guard. if you forget it, nobody can recover it.' : 'welcome back. enter your master password.');
     f.onsubmit = async e => {
       e.preventDefault();
       const pw = f.elements.pw.value;
@@ -887,7 +984,7 @@ function lockScreen(st) {
         if (pw.length < 8) { say('The password must be at least 8 characters'); return; }
         if (pw !== f.elements.pw2.value) { say('The passwords do not match'); return; }
       }
-      say('Checking…');
+      say('Checking…', true);
       const r = setup ? await native.sec.setup(pw) : await native.sec.unlock(pw);
       if (r.error) { say(r.error); f.elements.pw.select(); return; }
       finish();
@@ -899,21 +996,24 @@ function lockScreen(st) {
 async function lockNow() {
   if (locking) return;
   locking = true;
-  if (!NOSAVE) await native.data.save(S);
-  await native.sec.lock();
-  pushPopup(true);
-  closeModal();
-  $('#confirm').hidden = true;
-  $('#main').innerHTML = '';
-  $('#nav').innerHTML = '';
-  C.vault = [];
-  await lockScreen(await native.sec.status());
+  try {
+    if (!NOSAVE) await native.data.save(S);
+    await native.sec.lock();
+    pushPopup(true);
+    closeModal();
+    $('#confirm').hidden = true;
+    $('#main').innerHTML = '';
+    $('#nav').innerHTML = '';
+    C.vault = [];
+    await lockScreen(await native.sec.status());
+  } finally {
+    locking = false; // render() does nothing while locking, so this must be cleared before the first render after unlocking
+    lastActive = Date.now(); // so the idle timer cannot lock again before the app is back
+  }
   await loadVault();
   if (!NOSAVE) await native.data.save(S);
   render();
   pushPopup();
-  lastActive = Date.now();
-  locking = false;
 }
 setInterval(() => {
   const m = S && S.settings.autoLockMin;
@@ -942,6 +1042,10 @@ async function init() {
   syncAlerts(true);
   setTimeout(scheduleTick, 20000);
   setInterval(scheduleTick, 60000);
+  // deploys set to run after CI need the CI state even when the CI tab is not open (2 minutes keeps a project without a token under GitHub's anonymous rate limit)
+  setInterval(() => {
+    if (!locking) S.projects.filter(p => p.ci.repo && p.deploys.some(d => d.auto)).forEach(p => loadCI(p).then(softRender));
+  }, 120000);
   setInterval(() => {
     const p = V.name === 'project' && V.tab === 'ci' && proj(V.pid);
     const c = p && C.ci[p.id];

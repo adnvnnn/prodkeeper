@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, session, Tray, Notification, nativeImage, globalShortcut, nativeTheme, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, session, Tray, Notification, nativeImage, globalShortcut, nativeTheme, screen, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const gitlib = require('./lib/git');
@@ -6,8 +6,11 @@ const secure = require('./lib/secure');
 const vault = require('./lib/vault');
 const jobs = require('./lib/jobs');
 const net = require('./lib/net');
+const scaffold = require('./lib/scaffold');
 
 if (!app.requestSingleInstanceLock()) app.quit();
+// The UI is plain DOM: GPU compositing buys nothing, and a window that stays open for days is the classic victim of a lost GPU / display reset (white window)
+app.disableHardwareAcceleration();
 app.setAppUserModelId('dev.prodkeeper.app');
 
 let win, tray, popupWin, popupSnap = { locked: true }, popupPlaced = false, quitting = false;
@@ -52,11 +55,20 @@ function createWindow() {
   win.webContents.on('will-navigate', e => e.preventDefault());
   // a hidden renderer must still run the monitoring timers without throttling
   win.webContents.setBackgroundThrottling(false);
-  // After hours in the background the page can die (crash / out of memory) and leaves a blank white window: log it and load it again
+  // After hours the page can die (crash / out of memory / killed on sleep) or stop painting, which leaves a blank white window: log it and load it again
   win.webContents.on('render-process-gone', (_e, d) => {
     logCrash(`main window renderer gone: ${d.reason} (exit ${d.exitCode})`);
-    if (d.reason !== 'clean-exit' && win && !win.isDestroyed()) setTimeout(() => { if (win && !win.isDestroyed()) win.webContents.reload(); }, 500);
+    if (d.reason !== 'clean-exit') reloadPage();
   });
+  win.webContents.on('did-fail-load', (_e, code, desc, _url, isMainFrame) => {
+    if (!isMainFrame || code === -3) return; // -3: the load was replaced by another one
+    logCrash(`main window failed to load: ${desc} (${code})`);
+    reloadPage(2000);
+  });
+  win.webContents.on('unresponsive', () => logCrash('main window is not responding'));
+  win.on('restore', () => checkPage(true));
+  clearInterval(watchdog);
+  watchdog = setInterval(() => checkPage(false), WATCHDOG_MS);
   win.on('closed', () => { if (popupWin && !popupWin.isDestroyed()) popupWin.destroy(); });
   win.on('close', e => {
     if (quitting || !prefs.keepRunning) return;
@@ -73,27 +85,79 @@ function createWindow() {
 function logCrash(msg) {
   try { fs.appendFileSync(path.join(app.getPath('userData'), 'crash.log'), `${new Date().toISOString()} ${msg}\n`, 'utf8'); } catch { /* read-only */ }
 }
-/** A page that is blank or no longer answers when the window is shown is reloaded (a hung one is killed first; the crash handler reloads it) */
-async function ensurePageAlive() {
-  if (!win || win.isDestroyed()) return;
-  const wc = win.webContents;
-  let ok = false;
+/* ---------- Keeping the page alive ----------
+ * A window left open for days can end up white without any crash event: the renderer hangs, its content is gone, or the
+ * compositor stops painting (sleep / resume, a display or GPU driver reset). A watchdog looks at the page from the outside
+ * and loads it again; the app state is not lost because the key and the encrypted data live in main / on disk. */
+const INDEX_HTML = path.join(__dirname, 'renderer', 'index.html');
+const WATCHDOG_MS = Number(process.env.PK_WATCHDOG_MS) || 30000;
+const STRIKES = { hung: 3, blank: 2, white: 2 }; // consecutive bad checks before acting (a busy page is not a dead one)
+let watchdog = null, reloadTimer = null, reloadTimes = [], checking = false, strikes = { state: '', n: 0 };
+
+/** Loads the page again (a fresh load works on a crashed page where reload() may not); a page that keeps dying is retried slowly */
+function reloadPage(delay = 500) {
+  if (reloadTimer || !win || win.isDestroyed()) return;
+  const now = Date.now();
+  reloadTimes = reloadTimes.filter(t => now - t < 60000);
+  reloadTimes.push(now);
+  if (reloadTimes.length > 5) delay = 30000;
+  reloadTimer = setTimeout(() => {
+    reloadTimer = null;
+    if (win && !win.isDestroyed()) win.loadFile(INDEX_HTML).catch(e => logCrash('main window reload failed: ' + e.message));
+  }, delay);
+}
+const withTimeout = (p, ms) => Promise.race([p, new Promise(r => setTimeout(() => r(null), ms))]);
+
+/** True when a screenshot of the window is one flat pure-white frame (the app itself never paints pure white everywhere) */
+async function frameIsWhite() {
   try {
-    ok = await Promise.race([
-      wc.executeJavaScript('!!document.getElementById("main") && document.body.children.length > 0'),
-      new Promise(r => setTimeout(() => r(null), 5000)),
-    ]);
-  } catch { ok = false; }
-  if (!win || win.isDestroyed()) return;
-  if (ok === null) { logCrash('main window renderer did not answer when shown: restarted'); wc.forcefullyCrashRenderer(); }
-  else if (!ok) { logCrash('main window was blank when shown: reloaded'); wc.reload(); }
-  else wc.invalidate();
+    const img = await withTimeout(win.webContents.capturePage(), 4000);
+    if (!img || img.isEmpty()) return false;
+    const { width, height } = img.getSize(), px = img.toBitmap(); // BGRA
+    const sx = Math.max(1, Math.floor(width / 64)), sy = Math.max(1, Math.floor(height / 40));
+    for (let y = 0; y < height; y += sy) {
+      for (let x = 0; x < width; x += sx) {
+        const i = (y * width + x) * 4;
+        if (px[i] !== 255 || px[i + 1] !== 255 || px[i + 2] !== 255) return false;
+      }
+    }
+    return true;
+  } catch { return false; }
+}
+/** 'ok' | 'hung' (does not answer) | 'blank' (no app content in the page) | 'white' (content exists but nothing is painted) */
+async function probePage() {
+  const wc = win.webContents;
+  if (wc.isLoading()) return 'ok';
+  let dom;
+  try { dom = await withTimeout(wc.executeJavaScript('!!document.getElementById("main") && document.body.children.length > 0'), 5000); } catch { dom = false; }
+  if (dom === null) return 'hung';
+  if (!dom) return 'blank';
+  if (win.isVisible() && !win.isMinimized() && await frameIsWhite()) return 'white';
+  return 'ok';
+}
+/** force = the window was just shown / the PC just woke up: act on the first bad check instead of waiting for a second one */
+async function checkPage(force) {
+  if (checking || !win || win.isDestroyed()) return;
+  checking = true;
+  try {
+    if (force) await new Promise(r => setTimeout(r, 600)); // let the window paint first
+    if (!win || win.isDestroyed()) return;
+    const state = await probePage();
+    if (!win || win.isDestroyed()) return;
+    if (state === 'ok') { strikes = { state: '', n: 0 }; if (force) win.webContents.invalidate(); return; }
+    strikes = { state, n: strikes.state === state ? strikes.n + 1 : 1 };
+    if (!force && strikes.n < STRIKES[state]) return;
+    strikes = { state: '', n: 0 };
+    logCrash(`main window page is ${state}: ${state === 'hung' ? 'restarted' : 'reloaded'}`);
+    if (state === 'hung') win.webContents.forcefullyCrashRenderer(); // render-process-gone loads it again
+    else reloadPage();
+  } finally { checking = false; }
 }
 function showWin(nav) {
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
   win.show(); win.focus();
-  ensurePageAlive();
+  checkPage(true);
   if (nav) win.webContents.send('app:navigate', nav);
 }
 /* Task popup: a small always-on-top window above the tray icon. It stays put (no hide on blur) until it is closed with
@@ -160,7 +224,10 @@ function createTray() {
 
 app.on('second-instance', () => showWin());
 app.on('web-contents-created', (_e, wc) => wc.on('will-attach-webview', e => e.preventDefault()));
-app.on('child-process-gone', (_e, d) => { if (d.type === 'GPU' || d.reason !== 'clean-exit') logCrash(`${d.type} process gone: ${d.reason} (exit ${d.exitCode})`); });
+app.on('child-process-gone', (_e, d) => {
+  if (d.type === 'GPU' || d.reason !== 'clean-exit') logCrash(`${d.type} process gone: ${d.reason} (exit ${d.exitCode})`);
+  if (d.type === 'GPU') setTimeout(() => checkPage(true), 2000); // a lost GPU can leave the window unpainted
+});
 app.on('before-quit', () => { quitting = true; jobs.killServers(); vault.clearClipboard(); secure.lock(); });
 app.on('will-quit', () => globalShortcut.unregisterAll());
 
@@ -231,6 +298,8 @@ app.whenReady().then(() => {
   h('ci:runs', net.ciRuns);
   h('ci:workflows', net.ciWorkflows);
   h('ci:action', net.ciAction);
+  h('ci:detect', scaffold.detect);
+  h('ci:scaffold', scaffold.write);
 
   /* Background: tray, notifications, global shortcut */
   h('app:prefs', () => ({ ...prefs, packaged: app.isPackaged }));
@@ -274,6 +343,9 @@ app.whenReady().then(() => {
     else if (a.type === 'done' && typeof a.id === 'string') win.webContents.send('popup:action', { type: 'done', id: a.id });
     else if (a.type === 'open') { showWin(typeof a.pid === 'string' && a.pid ? { pid: a.pid, tab: 'tasks' } : undefined); }
   });
+
+  // after sleep, hibernation or unlocking the PC the display may have been reset underneath the window
+  for (const ev of ['resume', 'unlock-screen']) powerMonitor.on(ev, () => setTimeout(() => checkPage(true), 3000));
 
   createWindow();
   createTray();
