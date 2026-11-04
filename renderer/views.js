@@ -388,11 +388,21 @@ function flatJson(o, prefix = '', out = [], depth = 0) {
   } else out.push(['value', String(o)]);
   return out;
 }
-function sparkHtml(id) {
-  const arr = (S.checks[id] || []).slice(-40);
+function sparkHtml(id, name) {
+  const all = S.checks[id] || [], from = Math.max(0, all.length - 40), arr = all.slice(from);
   if (!arr.length) return '';
   const max = Math.max(...arr.map(c => c.ms || 0), 100);
-  return `<div class="spark">${arr.map(c => `<i class="${c.ok ? '' : 'bad'}" style="height:${c.ok ? Math.max(10, Math.round((c.ms / max) * 100)) : 100}%" title="${fmtTs(c.t)} · ${c.ok ? num(c.ms) + 'ms' : 'failed'}"></i>`).join('')}</div>`;
+  const bars = arr.map((c, k) => `<i class="${c.ok ? '' : 'bad'}" data-action="check-detail" data-id="${esc(id)}" data-i="${from + k}" data-name="${esc(name || '')}" style="height:${c.ok ? Math.max(10, Math.round((c.ms / max) * 100)) : 100}%" title="${fmtTs(c.t)} · ${c.ok ? num(c.ms) + 'ms' : esc(c.why || 'failed') + ' — click for details'}"></i>`).join('');
+  return `<div class="spark">${bars}</div>${arr.some(c => !c.ok) ? '<div class="sub" style="margin-top:6px">Click a red bar to see why that check failed.</div>' : ''}`;
+}
+function showCheck(title, c) {
+  const rows = [['Time', fmtTs(c.t)], ['Result', c.ok ? 'OK' : 'Failed'], ['HTTP status', c.s ? String(c.s) : '—'], ['Response time', c.ms ? num(c.ms) + ' ms' : '—']];
+  const why = c.ok ? '' : c.why || 'The reason was not recorded (this check ran before failure reasons were saved).';
+  openModal(`<header><span>${esc(title)}</span><button class="iconbtn" data-action="close">${I.x}</button></header>
+    <div class="body">${why ? `<div class="alert bad" style="cursor:default">${I.alert}<span>${esc(why)}</span></div>` : ''}
+      <div class="jgrid">${rows.map(([k, v]) => `<div><span>${k}</span><b>${esc(v)}</b></div>`).join('')}</div>
+      ${c.body ? `<div class="sub" style="margin:10px 0 4px">Start of the response</div><pre class="console">${esc(c.body)}</pre>` : ''}</div>
+    <footer><span class="grow"></span><button class="btn" data-action="close">Close</button></footer>`);
 }
 function uptimePct(id) {
   const a = S.checks[id] || [];
@@ -415,7 +425,7 @@ function tabStatus(p) {
       ${r.keywordOk === false ? `<div class="alert bad" style="cursor:default">${I.alert}<span>The text "${esc(e.keyword)}" was not found in the response.</span></div>` : ''}
       ${r.error ? `<div class="alert bad" style="cursor:default">${I.alert}<span>${esc(r.error)}</span></div>` : ''}
       ${r.json !== undefined ? `<div class="jgrid">${flatJson(r.json).map(([k, v]) => `<div><span>${esc(k)}</span><b>${esc(v.length > 60 ? v.slice(0, 60) + '…' : v)}</b></div>`).join('')}</div>` : ''}
-      ${sparkHtml(e.id)}`;
+      ${sparkHtml(e.id, e.name || target)}`;
     return `<div class="card section">
       <div class="row between"><h2 style="margin:0">${I.globe}<bdi>${esc(e.name || target)}</bdi> ${badge}${chip(esc((e.method || 'GET') + (e.expect ? ' → ' + e.expect : '')), '')}</h2>
         <div class="row"><button class="btn sm" data-action="env-check" data-id="${e.id}">${I.refresh}Send request</button><button class="btn sm" data-action="env-full" data-id="${e.id}" data-name="${esc(e.name || '')}" ${r ? '' : 'disabled'}>Full response</button></div></div>

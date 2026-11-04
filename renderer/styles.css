@@ -247,6 +247,7 @@ pre.console { margin: 0; background: var(--code-bg); color: #d4d6dc; padding: 12
 .spark i { flex: 1; max-width: 10px; min-height: 3px; background: var(--faint); border-radius: 1px; }
 .spark i:hover { background: var(--text); }
 .spark i.bad { background: var(--danger); }
+.spark i { cursor: pointer; }
 
 /* ---------- Lock screen ---------- */
 .lockscreen { position: fixed; inset: 0; z-index: 55; background: var(--bg); display: grid; place-items: center; padding: 20px; overflow: auto; }

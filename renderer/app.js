@@ -138,7 +138,12 @@ async function checkEnv(p, e) {
   });
   C.health[e.id] = r;
   const arr = S.checks[e.id] || (S.checks[e.id] = []);
-  arr.push({ t: r.at, ok: !!r.ok, ms: r.ms || 0, s: r.status || 0 });
+  const entry = { t: r.at, ok: !!r.ok, ms: r.ms || 0, s: r.status || 0 };
+  if (!r.ok) { // keep why it failed so a red bar can explain itself later
+    entry.why = r.error || (r.keywordOk === false ? `The text "${e.keyword}" was not found in the response` : `HTTP ${r.status} ${r.statusText || ''}${e.expect ? ` (expected ${e.expect})` : ''}`.trim());
+    if (r.body) entry.body = r.body.slice(0, 600);
+  }
+  arr.push(entry);
   if (arr.length > 120) arr.splice(0, arr.length - 120);
   save();
   return r;
@@ -631,6 +636,10 @@ const actions = {
   'env-full': el => {
     const r = C.health[el.dataset.id];
     if (r) showResponse(el.dataset.name || 'Response', r);
+  },
+  'check-detail': el => {
+    const c = (S.checks[el.dataset.id] || [])[Number(el.dataset.i)];
+    if (c) showCheck(el.dataset.name || 'Check', c);
   },
   'req-new': () => requestModal(),
 
