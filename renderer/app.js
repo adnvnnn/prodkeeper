@@ -8,7 +8,7 @@ const C = { git: {}, gd: {}, tb: {}, health: {}, ci: {}, wf: {}, backups: {}, va
 const V = { name: 'projects', pid: null, tab: 'tasks', bfilter: 'all', hKind: '', hProj: '', vProj: '', runId: null };
 const RUN = {}; // jobs in flight: id -> {h}
 
-const blank = () => ({ version: 2, projects: [], history: [], runlog: [], archive: [], checks: {}, settings: { theme: 'dark', healthMin: 5, notified: '', autoLockMin: 15, notifyOn: true, wip: T_WIP_DEFAULT } });
+const blank = () => ({ version: 2, projects: [], history: [], runlog: [], archive: [], checks: {}, settings: { theme: 'dark', healthMin: 5, notified: '', autoLockMin: 15, notifyOn: true, wip: T_WIP_DEFAULT, sprints: SPRINT_LIMIT_DEFAULT } });
 const normProject = p => normTasks({
   repoPath: '', ...p, desc: undefined, notes: undefined, color: undefined,
   priority: [0, 1, 2].includes(p.priority) ? p.priority : 1,
@@ -27,6 +27,7 @@ function normTasks(p) {
     if (!['backlog', 'todo', 'doing', 'done'].includes(t.status)) t.status = 'todo';
     if (!t.num) t.num = ++seq;
     t.estimate = t.estimate || 0; t.sprintId = t.sprintId || ''; t.branch = t.branch || ''; t.branchAt = t.branchAt || 0;
+    t.blocked = t.status === 'doing' && !!t.blocked;
   }
   p.taskSeq = seq;
   return p;
@@ -49,6 +50,8 @@ function normalize(d) {
     out.settings.wip = old ? old.wip : T_WIP_DEFAULT;
   }
   out.settings.wip = Math.round(out.settings.wip);
+  if (!(out.settings.sprints >= 0)) out.settings.sprints = SPRINT_LIMIT_DEFAULT;
+  out.settings.sprints = Math.round(out.settings.sprints);
   return out;
 }
 
@@ -190,6 +193,10 @@ function computeAlerts() {
   const A = [];
   const iso = t => '⁨' + t + '⁩'; // direction is derived from the text itself so trailing characters of a URL (like /) do not jump around
   const add = (p, sev, text, tab) => A.push({ pid: p ? p.id : '', name: p ? p.name : 'Vault', sev, text, tab });
+  // the WIP limit is shared by all projects, so this alert belongs to no single project and opens the Tasks page
+  if (wipLimit() && doingTotal() > wipLimit()) A.push({ pid: '', name: 'Tasks', sev: 'warn', text: `${num(doingTotal())} tasks in progress across all projects (WIP limit ${num(wipLimit())})`, to: 'tasks' });
+  const sprinting = activeSprintApps();
+  if (sprintLimit() && sprinting.length > sprintLimit()) A.push({ pid: '', name: 'Tasks', sev: 'warn', text: `${num(sprinting.length)} sprints are running at once (${sprinting.map(p => iso(p.name)).join(', ')}; limit ${num(sprintLimit())})`, to: 'projects' });
   for (const p of S.projects) {
     const g = C.git[p.id];
     if (p.repoPath && g) {
@@ -208,7 +215,6 @@ function computeAlerts() {
     }
     const sp = activeSprint(p);
     if (sp && diffDays(sp.end) < 0) add(p, 'warn', `Sprint "${iso(sp.name)}" ended ${num(-diffDays(sp.end))} days ago — close it and run the retro`, 'tasks');
-    if (wipLimit(p) && doingCount(p) > wipLimit(p)) add(p, 'warn', `${num(doingCount(p))} tasks in progress (WIP limit ${num(wipLimit(p))})`, 'tasks');
     for (const t of p.tasks) {
       const run = t.status === 'doing' && branchRun(p, t);
       if (run && run.status === 'completed' && run.conclusion === 'failure') add(p, 'warn', `CI failed on ${iso(t.branch)} (${taskKey(p, t)} ${iso(t.title)})`, 'tasks');
@@ -886,6 +892,7 @@ document.addEventListener('change', e => {
   if (e.target.dataset.setting === 'autoLockMin') { S.settings.autoLockMin = Number(e.target.value); save(); }
   if (e.target.dataset.setting === 'notifyOn') { S.settings.notifyOn = e.target.checked; save(); }
   if (e.target.dataset.setting === 'wip') { S.settings.wip = Number(e.target.value) || 0; save(); renderTopbar(); syncAlerts(); }
+  if (e.target.dataset.setting === 'sprints') { S.settings.sprints = Number(e.target.value) || 0; save(); renderTopbar(); syncAlerts(); }
   if (e.target.dataset.pref) native.app.setPrefs({ [e.target.dataset.pref]: e.target.checked });
   if (e.target.dataset.setting === 'healthMin') { S.settings.healthMin = Number(e.target.value); save(); startHealthTimer(); }
   if (e.target.dataset.hf) { V[e.target.dataset.hf] = e.target.value; render(); }

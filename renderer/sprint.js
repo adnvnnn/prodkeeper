@@ -6,7 +6,11 @@
  * retrospective. Without a sprint the board still works as a plain kanban. */
 const SPRINT_WEEKS = [1, 2, 3, 4];
 
+const SPRINT_LIMIT_DEFAULT = 1; // sprints running at the same time across all apps (one person); 0 = off
+
 const activeSprint = p => (p.sprints || []).find(s => !s.closedAt);
+const sprintLimit = () => S.settings.sprints;
+const activeSprintApps = () => S.projects.filter(activeSprint);
 const sprintTasks = (p, s) => p.tasks.filter(t => t.sprintId === s.id);
 const sumPts = list => list.reduce((n, t) => n + (t.estimate || 0), 0);
 
@@ -84,7 +88,11 @@ function sprintCloseModal(pid) {
 }
 
 Object.assign(actions, {
-  'sprint-start': el => sprintStartModal(el.dataset.pid),
+  'sprint-start': async el => {
+    const running = activeSprintApps(), lim = sprintLimit();
+    if (lim && running.length >= lim && !(await askConfirm(`${running.map(p => `"${p.name}"`).join(', ')} already ${running.length > 1 ? 'have sprints' : 'has a sprint'} running (limit ${num(lim)} at a time).\nOne person committing to several sprints at once spreads the work thin. Finishing one sprint before starting the next keeps it focused.`, 'Start anyway', false))) return;
+    sprintStartModal(el.dataset.pid);
+  },
   'sprint-close': el => sprintCloseModal(el.dataset.pid),
 });
 
@@ -111,7 +119,7 @@ document.addEventListener('submit', e => {
     s.retro = (text('well') || text('improve') || actionLines.length) ? { well: text('well'), improve: text('improve'), actions: actionLines.join('\n') } : null;
     for (const t of left) {
       t.sprintId = '';
-      if (fd.get('leftover') !== 'carry') { t.status = 'backlog'; t.startedAt = 0; } // carried tasks keep their column
+      if (fd.get('leftover') !== 'carry') { t.status = 'backlog'; t.startedAt = 0; t.blocked = false; } // carried tasks keep their column
     }
     if (fd.get('mk')) actionLines.forEach(title => makeTask(p, { title: 'Retro: ' + title, priority: 2 }));
     save(); closeModal(); V.tview = 'sprints'; render(); toast('Sprint closed');

@@ -28,7 +28,7 @@ function renderTopbar() {
 
 /* ---------- Projects ---------- */
 function alertRow(a, hideName) {
-  const act = a.pid ? `data-action="open-project" data-id="${a.pid}" data-tab="${a.tab}"` : 'data-action="go" data-to="vault"';
+  const act = a.pid ? `data-action="open-project" data-id="${a.pid}" data-tab="${a.tab}"` : `data-action="go" data-to="${a.to || 'vault'}"`;
   return `<div class="alert ${a.sev}" ${act}>${I.alert}${hideName ? '' : `<b>${esc(a.name)}</b>`}<span${hideName ? ' style="color:var(--text)"' : ''}>${esc(a.text)}</span></div>`;
 }
 function viewProjects() {
@@ -338,8 +338,10 @@ function viewSettings() {
         <div class="row"><button class="btn primary" data-action="lock-now">${I.lock}Lock now</button><button class="btn" data-action="pw-change">Change master password</button></div>
         <div class="field" style="margin-top:14px"><label>Auto-lock after inactivity</label>
           <select data-setting="autoLockMin" style="max-width:220px">${opt([[0, 'Never'], [5, '5 minutes'], [10, '10 minutes'], [15, '15 minutes'], [30, '30 minutes'], [60, '1 hour']], al)}</select></div></div>
-      <div class="card"><h2>Tasks</h2><p class="sub">Warn when more tasks than this are in progress at once (the WIP limit). It applies to every project; "Off" turns the warning off.</p>
-        <select data-setting="wip" style="max-width:220px">${opt([[0, 'Off'], [1, '1 task'], [2, '2 tasks'], [3, '3 tasks'], [4, '4 tasks'], [5, '5 tasks'], [6, '6 tasks'], [8, '8 tasks']], S.settings.wip)}</select></div>
+      <div class="card"><h2>Tasks</h2><p class="sub">Warn when more tasks than this are in progress at once (the WIP limit). It counts the tasks in progress in all projects together, not per project; "Off" turns the warning off.</p>
+        <select data-setting="wip" style="max-width:220px">${opt([[0, 'Off'], [1, '1 task'], [2, '2 tasks'], [3, '3 tasks'], [4, '4 tasks'], [5, '5 tasks'], [6, '6 tasks'], [8, '8 tasks']], S.settings.wip)}</select>
+        <p class="sub" style="margin-top:14px">Tasks marked <b>Blocked</b> (waiting on CI, a review or someone else) are not counted. Warn when more sprints than this run at once across all projects; "Off" turns the warning off.</p>
+        <select data-setting="sprints" style="max-width:220px">${opt([[0, 'Off'], [1, '1 sprint'], [2, '2 sprints'], [3, '3 sprints']], S.settings.sprints)}</select></div>
       <div class="card"><h2>Health monitoring</h2><p class="sub">How often should sites (and git) be checked automatically?</p>
         <select data-setting="healthMin">${opt([[0, 'Off'], [1, 'Every 1 minute'], [5, 'Every 5 minutes'], [15, 'Every 15 minutes'], [60, 'Every hour']], S.settings.healthMin)}</select></div>
       <div class="card"><h2>${I.clock}Background and notifications</h2>

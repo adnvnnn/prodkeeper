@@ -14,7 +14,7 @@ const byPrio = (a, b) => b.priority - a.priority;
 const taskKey = (p, t) => `T-${t.num}`;
 const isNow = t => t.status === 'todo' || t.status === 'doing';
 const openTasks = p => p.tasks.filter(t => t.status !== 'done');
-/** The WIP limit is one app-wide setting (Settings > Tasks); 0 = off */
+/** The WIP limit is one app-wide setting (Settings > Tasks); 0 = off. It caps the tasks in progress across all apps together */
 const wipLimit = () => S.settings.wip;
 
 /** Finds a task (and its app) by id across all apps */
@@ -37,6 +37,7 @@ function setTaskStatus(p, t, status) {
   const sp = activeSprint(p), was = t.status;
   t.status = status;
   t.doneAt = status === 'done' ? Date.now() : null;
+  if (status !== 'doing') t.blocked = false;
   if (status === 'backlog') t.sprintId = '';
   else if (!t.sprintId && sp) t.sprintId = sp.id;
   if (status === 'doing' && !t.startedAt) t.startedAt = Date.now();
@@ -49,17 +50,21 @@ function archiveTask(p, t) {
 }
 
 /* ---------- WIP limit ---------- */
-const doingCount = p => p.tasks.filter(t => t.status === 'doing').length;
+/** Blocked tasks (waiting on CI, a review, someone else) are in progress but do not count against the limit */
+const doingCount = p => p.tasks.filter(t => t.status === 'doing' && !t.blocked).length;
+/** Tasks in progress across every app: this is what the WIP limit counts */
+const doingTotal = () => S.projects.reduce((n, p) => n + doingCount(p), 0);
 async function wipAllows(p, t, toStatus) {
-  const lim = wipLimit(p);
-  if (toStatus !== 'doing' || t.status === 'doing' || !lim || doingCount(p) < lim) return true;
-  return askConfirm(`"${p.name}" already has ${num(doingCount(p))} tasks in progress (limit ${num(lim)}).\nFinishing work before starting new work keeps things moving.`, 'Move anyway', false);
+  const lim = wipLimit(), n = doingTotal();
+  if (toStatus !== 'doing' || t.status === 'doing' || !lim || n < lim) return true;
+  return askConfirm(`You already have ${num(n)} tasks in progress across all projects (limit ${num(lim)}).\nFinishing work before starting new work keeps things moving.`, 'Move anyway', false);
 }
 
 /* ---------- Rendering: cards and rows ---------- */
 function taskChips(p, t) {
   const out = [];
   if (t.estimate) out.push(chip(`${num(t.estimate)} pt`, ''));
+  if (t.blocked) out.push(chip('Blocked', 'late'));
   if (t.branch) {
     const b = branchOf(p, t), run = branchRun(p, t);
     out.push(chip(`<bdi>${esc(t.branch)}</bdi>`, b && b.merged ? 'okc' : '', I.branch));
@@ -103,10 +108,10 @@ function colTasks(p, col) {
 }
 
 function boardHtml(p) {
-  const lim = wipLimit(p);
+  const lim = wipLimit(), total = doingTotal();
   const col = c => {
-    const list = colTasks(p, c), over = c === 'doing' && lim && doingCount(p) > lim;
-    const head = `<div class="col-h"><span>${T_STATUS[c]}</span><span class="cnt">${num(list.length)}${c === 'doing' && lim ? ` / ${num(lim)}` : ''}</span></div>`;
+    const list = colTasks(p, c), over = c === 'doing' && lim && total > lim;
+    const head = `<div class="col-h"><span>${T_STATUS[c]}</span><span class="cnt"${c === 'doing' && lim ? ` title="Tasks in progress across all projects, not counting blocked ones (WIP limit)"` : ''}>${num(list.length)}${c === 'doing' && lim ? ` · ${num(total)} / ${num(lim)} total` : ''}</span></div>`;
     const add = c === 'backlog' ? `<div class="quick-add"><input type="text" data-tquick="${p.id}" placeholder="Add to backlog…"></div>` : '';
     return `<div class="col ${over ? 'over' : ''} ${c === 'backlog' ? 'backlog' : ''}" data-col="${c}" data-pid="${p.id}">${head}${add}
       <div class="col-b">${list.map(t => cardHtml(p, t)).join('')}</div></div>`;
@@ -163,6 +168,7 @@ async function taskModal(pid, tid) {
         <div class="field"><label>Status</label><select name="status">${opt(Object.entries(T_STATUS), t.status)}</select></div></div>
       <div class="two"><div class="field"><label>Priority</label><select name="priority">${opt(T_PRIO.map((l, i) => [i, l]), t.priority)}</select></div>
         <div class="field"><label>Estimate (story points)</label><select name="estimate">${opt([[0, 'None'], ...T_POINTS.map(n => [n, n])], t.estimate || 0)}</select></div></div>
+      <div class="field"><label class="opt"><input type="checkbox" name="blocked" ${t.blocked ? 'checked' : ''}> Blocked — waiting on CI, a review or someone else (only for In progress; not counted in the WIP limit)</label></div>
       <div class="field"><label>Git branch</label>
         <div class="row">${branchSelect('branch', t.branch || '', names, '— No branch (the task closes itself when its branch is merged) —', 'style="flex:1"')}
           ${canStart ? `<button type="button" class="btn" data-action="task-start" data-pid="${p.id}" data-id="${tid}" title="Create a branch for this task, switch to it and move the task to In progress">${I.branch}Start branch</button>` : ''}</div></div>
@@ -268,7 +274,7 @@ document.addEventListener('change', async e => {
   sel.outerHTML = branchSelect('branch', p.id === f.dataset.pid ? sel.value : '', names, sel.options[0].textContent, 'style="flex:1"');
 });
 
-document.addEventListener('submit', e => {
+document.addEventListener('submit', async e => {
   const f = e.target;
   if (f.id !== 'taskForm') return;
   e.preventDefault();
@@ -279,6 +285,11 @@ document.addEventListener('submit', e => {
   const data = { title, priority: Number(fd.get('priority')), estimate: Number(fd.get('estimate')) || 0 };
   const status = fd.get('status');
   if (branch && !/^(?!-)[A-Za-z0-9._/@+-]+$/.test(branch)) return toast('Invalid branch name', true);
+  // the status menu must respect the WIP limit like dragging does; asked before anything is changed so "Cancel" leaves the task untouched
+  const existing = f.dataset.id && oldP.tasks.find(x => x.id === f.dataset.id);
+  const blocked = status === 'doing' && !!fd.get('blocked');
+  const counted = existing && existing.status === 'doing' && !existing.blocked; // already counted against the limit, so keeping it there is fine
+  if (!blocked && !counted && !(await wipAllows(newP, { status: 'backlog' }, status))) return;
   let t;
   if (f.dataset.id) {
     t = oldP.tasks.find(x => x.id === f.dataset.id);
@@ -290,6 +301,7 @@ document.addEventListener('submit', e => {
     t = makeTask(newP, { ...data, branch, branchAt: branch ? Date.now() : 0 });
     if (status !== 'backlog') setTaskStatus(newP, t, status);
   }
+  t.blocked = blocked;
   save(); closeModal(); render(); toast('Saved');
   if (branch) loadTaskBranches(newP).then(softRender);
 });
