@@ -7,7 +7,7 @@ Built with Electron and vanilla JS (no UI framework, no build step).
 ## Features
 
 - **Git** – status, fetch / pull / push, branches, tags, recent commits.
-- **Deploy** – your own commands with a pre-flight checklist, live output and a post-deploy health check; the same tab also holds *Publish to folder* (saved as a zip or a folder, optionally versioned).
+- **Deploy** – your own commands with a pre-flight checklist, live output and a post-deploy health check; the build / publish step is part of the deploy form (its output, a zip or a folder, is passed to the command as `%PUBLISH_OUT%` and every run keeps its own copy); *Publish to folder* on the same tab remains for building without deploying.
 - **Live status** – HTTP checks with status code, latency, SSL expiry and uptime.
 - **Databases** – define a SQL Server database once (connection kept encrypted in the vault) and manage it from one card: test connection, back up now or on a schedule with retention, run the update / migration command (with a backup first), and restore from any backup file.
 - **Backups** – zip a folder or run any command, with retention and optional schedule.

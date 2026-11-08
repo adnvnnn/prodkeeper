@@ -564,9 +564,18 @@ function saveDeploy(form) {
   if (!name || !command) return;
   const data = { name, command, envId: fd.get('envId'), shell: fd.get('shell'), cwd: String(fd.get('cwd')).trim(), branch: String(fd.get('branch')).trim(), envSpec: String(fd.get('envSpec') ?? '').trim(), dbId: String(fd.get('dbId') || ''), noHealth: !fd.get('health'),
     preTest: !!fd.get('preTest'), backupId: String(fd.get('backupId') || ''), publishId: String(fd.get('publishId') || ''), dbUpdateId: String(fd.get('dbUpdateId') || ''), ciGate: fd.get('ciGate'), auto: !!fd.get('auto') && !!String(fd.get('branch')).trim(), ...readDelivery(fd) };
-  const old = did && p.deploys.find(x => x.id === did);
+  const old = did && p.deploys.find(x => x.id === did), id = old ? old.id : uid();
   if (data.auto && !(old && old.auto)) data.autoSince = Date.now(); // only CI runs that finish after this switch is turned on can trigger it
-  if (old) Object.assign(old, data); else p.deploys.push({ id: uid(), ...data });
+  // the build typed into the deploy is a publish definition owned by it (the deploy and its build are one thing for the user)
+  const bc = String(fd.get('buildCmd') ?? '').trim(), own = p.ops.find(o => o.deployId === id);
+  if (bc) {
+    const base = (p.repoPath || '').replace(/[\/]+$/, ''), dest = String(fd.get('buildDest') ?? '').trim() || (base ? base + '-publish' : '');
+    if (!dest) return toast('Set where to keep the builds', true);
+    const op = { type: 'publish', deployId: id, name: name, command: bc, shell: data.shell, cwd: data.cwd, envSpec: '', dbId: '', destDir: dest, zip: !!fd.get('buildZip'), versioned: true, keep: 5, openAfter: false };
+    if (own) Object.assign(own, op); else p.ops.push({ id: uid(), ...op });
+    data.publishId = (own || p.ops[p.ops.length - 1]).id;
+  } else if (own) p.ops = p.ops.filter(o => o !== own);
+  if (old) Object.assign(old, data); else p.deploys.push({ id, ...data });
   save(); closeModal(); render(); toast('Saved');
 }
 function saveBackup(form) {
@@ -677,6 +686,7 @@ const actions = {
   'git-new-branch': () => branchModal(),
   'git-tag-new': () => tagModal(),
   'git-tag-push': el => gitOp(V.pid, 'pushTag', { name: el.dataset.name }, `Push tag ${el.dataset.name}`),
+  buildtpl: el => { document.querySelector('#deployForm [name=buildCmd]').value = OP_TEMPLATES.publish[el.dataset.i].cmd; },
   bfilter: el => { V.bfilter = el.dataset.v; render(); },
 
   /* Deploy */
@@ -690,7 +700,7 @@ const actions = {
   },
   'deploy-del': async el => {
     if (!(await askConfirm('Delete this deploy definition?'))) return;
-    const p = proj(V.pid); p.deploys = p.deploys.filter(x => x.id !== el.dataset.id);
+    const p = proj(V.pid); p.deploys = p.deploys.filter(x => x.id !== el.dataset.id); p.ops = p.ops.filter(o => o.deployId !== el.dataset.id);
     save(); closeModal(); render();
   },
   tpl: el => {
@@ -703,18 +713,9 @@ const actions = {
       if (f) { f.value = v; if (k === 'strategy' || k === 'approval') ddSync(f); }
     }
     if (t.plan || t.rollback) form.querySelector('details.dlv').open = true;
-    if (t.pub) {
-      // one step: make sure a folder publish exists and run it first
-      const p = proj(V.pid), sel = document.querySelector('#deployForm [name=publishId]');
-      let op = p.ops.find(o => o.type === 'publish' && !o.zip);
-      if (!op) {
-        const base = (p.repoPath || '').replace(/[\\/]+$/, '');
-        op = { id: uid(), type: 'publish', name: 'Web publish', command: 'dotnet publish -c Release -o "%PUBLISH_DIR%"', shell: 'cmd', cwd: '', envSpec: '', dbId: '', destDir: base ? base + '-publish' : '', zip: false, versioned: false, keep: 5, openAfter: false };
-        p.ops.push(op); save();
-        sel.insertAdjacentHTML('beforeend', `<option value="${op.id}">${esc(op.name)}</option>`);
-        if (!op.destDir) toast('Set the destination folder of "Web publish" in Publish to folder', true);
-      }
-      sel.value = op.id;
+    if (t.pub) { // one step: the build goes into the deploy itself
+      const bc = form.elements.buildCmd;
+      if (!bc.value.trim()) bc.value = OP_TEMPLATES.publish[0].cmd;
     }
     if (!t.env) return;
     if (env && !env.value.includes('WD_PASS=')) env.value = (env.value ? env.value + '\n' : '') + t.env;

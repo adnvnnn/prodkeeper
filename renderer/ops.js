@@ -42,7 +42,7 @@ function opCard(p, o) {
 
 /** A "Publish to folder" or "Database update" group, with its own Add button; rendered on the Deploy tab */
 function opSection(p, type) {
-  const T = OP_TYPES[type], list = p.ops.filter(o => o.type === type);
+  const T = OP_TYPES[type], list = p.ops.filter(o => o.type === type && !o.deployId); // a build made inside a deploy belongs to that deploy
   return `<div class="page-head" style="margin-top:24px"><h2 style="margin:0;display:flex;align-items:center;gap:8px">${T.icon}${T.label}</h2><span class="grow"></span>
       <button class="btn primary" data-action="op-new" data-pid="${p.id}" data-type="${type}">${I.plus}Add ${T.label}</button></div>
     ${list.length ? `<div class="stack">${list.map(o => opCard(p, o)).join('')}</div>`

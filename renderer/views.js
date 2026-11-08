@@ -579,7 +579,7 @@ const branchSelect = (name, cur, names, none, attrs = '') => {
 async function deployModal(did) {
   const p = proj(V.pid), names = await localBranches(p), g = C.git[p.id];
   const d = did ? p.deploys.find(x => x.id === did) : { name: '', command: '', shell: 'cmd', cwd: '', branch: names.includes('main') ? 'main' : (g && g.branch) || '', envId: '', envSpec: '', noHealth: false, preTest: false, ciGate: 'warn', auto: false };
-  const gate = d.ciGate || 'warn';
+  const gate = d.ciGate || 'warn', own = did && p.ops.find(o => o.deployId === did), legacy = p.ops.filter(o => o.type === 'publish' && !o.deployId);
   openModal(`<form id="deployForm" data-pid="${p.id}" data-id="${did || ''}">${modalHead(did ? 'Edit deploy' : 'Add deploy')}
     <div class="body">
       <div class="two"><div class="field"><label>Name</label><input type="text" name="name" value="${esc(d.name)}" required placeholder="Production"></div>
@@ -597,7 +597,13 @@ async function deployModal(did) {
         <option value="off" ${gate === 'off' ? 'selected' : ''}>Do not look at CI</option></select></div>
       <div class="field"><label>Pipeline: backup first (if it fails, the deploy does not run)</label><select name="backupId"><option value="">— No backup —</option>${p.backups.map(b => `<option value="${b.id}" ${d.backupId === b.id ? 'selected' : ''}>${esc(dbRefLabel(p, b, true))}</option>`).join('')}</select>
         ${p.backups.length ? '' : '<div class="sub">First define a backup in the "Backup" tab.</div>'}</div>
-      <div class="two"><div class="field"><label>Pipeline: publish first</label><select name="publishId"><option value="">— None —</option>${p.ops.filter(o => o.type === 'publish').map(o => `<option value="${o.id}" ${d.publishId === o.id ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select><div class="sub">The output (zip or folder) is passed to the command as <code>%PUBLISH_OUT%</code></div></div>
+      <div class="field"><label>Pipeline: build / publish first (optional)</label>
+        <textarea name="buildCmd" dir="ltr" style="min-height:56px;font-family:Consolas,monospace" placeholder='dotnet publish -c Release -o "%PUBLISH_DIR%"'>${esc(own ? own.command : '')}</textarea>
+        <div class="row">${OP_TEMPLATES.publish.map((t, i) => `<button type="button" class="btn sm" data-action="buildtpl" data-i="${i}">${t.t}</button>`).join('')}</div>
+        <div class="sub">The command writes its output to <code>%PUBLISH_DIR%</code>; the deploy command receives the result (a zip or a folder) as <code>%PUBLISH_OUT%</code>. Every run keeps its own copy, so a rollback can deploy an older build again.</div></div>
+      <div class="two"><div class="field"><label>Where to keep the builds (default: next to the repository, <code>-publish</code>)</label><input type="text" name="buildDest" value="${esc(own ? own.destDir : '')}" dir="ltr" placeholder="D:\Publish\my-app"></div>
+        <div class="field"><label>&nbsp;</label><label class="chk"><input type="checkbox" name="buildZip" ${own && !own.zip ? '' : 'checked'}> Save the build as a zip file</label></div></div>
+      <div class="two">${legacy.length ? `<div class="field"><label>Or use an existing "Publish to folder" definition</label><select name="publishId"><option value="">— None —</option>${legacy.map(o => `<option value="${o.id}" ${d.publishId === o.id ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select></div>` : '<div></div>'}
         <div class="field"><label>Pipeline: database update first</label><select name="dbUpdateId"><option value="">— None —</option>${p.ops.filter(o => o.type === 'db').map(o => `<option value="${o.id}" ${d.dbUpdateId === o.id ? 'selected' : ''}>${esc(dbRefLabel(p, o, false))}</option>`).join('')}</select></div></div>
       <label class="chk"><input type="checkbox" name="preTest" ${d.preTest ? 'checked' : ''}> Run the project's tests first (Settings → Test); a failing test stops the deploy</label>
       <label class="chk"><input type="checkbox" name="auto" ${d.auto ? 'checked' : ''}> Deploy automatically when CI succeeds on the expected branch (only while this app is open and unlocked)</label>
