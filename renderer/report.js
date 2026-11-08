@@ -261,6 +261,36 @@ function kpi(label, value, sub, c, p) {
   return `<div class="kpi"><span>${label}</span><b>${value}</b><small>${sub || '&nbsp;'}</small><em>${c === undefined ? '' : deltaText(c, p)}</em></div>`;
 }
 
+/* ---------- Delivery performance (DORA) ---------- */
+/** The four DORA measures from the release records (p.releases): how often, how fast, how safely, how quickly restored */
+function repDora(M) {
+  const f = M.rng.from.getTime(), t = M.rng.to.getTime(), projects = S.projects.filter(p => M.scope.has(p.id));
+  const rels = projects.flatMap(p => p.releases.map(r => ({ r, p }))).filter(x => x.r.ts >= f && x.r.ts <= t);
+  const deployed = rels.filter(x => x.r.status !== 'failed'), bad = rels.filter(x => x.r.status !== 'ok');
+  const lead = deployed.filter(x => x.r.leadMs > 0).map(x => x.r.leadMs).sort((a, b) => a - b);
+  const restore = bad.map(({ r, p }) => {
+    if (r.restoredAt) return r.restoredAt - r.ts;
+    const next = p.releases.filter(o => o.did === r.did && o.status === 'ok' && o.ts > r.ts).map(o => o.ts).sort((a, b) => a - b)[0];
+    return next ? next - r.ts : null;
+  }).filter(x => x != null).sort((a, b) => a - b);
+  const perDay = deployed.length / Math.max(1, M.rng.days), cfr = rels.length ? bad.length / rels.length : null;
+  const NAMES = ['Elite', 'High', 'Medium', 'Low'], pick = i => NAMES[i === -1 ? 3 : i];
+  const band = (v, limits) => pick(limits.findIndex(l => v <= l)), bandUp = (v, limits) => pick(limits.findIndex(l => v >= l));
+  return { n: rels.length, bad: bad.length, deployed: deployed.length, perDay, lead: median(lead), cfr, restore: median(restore), rollbacks: rels.filter(x => x.r.status === 'rolledback').length,
+    rate: { freq: deployed.length ? bandUp(perDay, [1, 1 / 7, 1 / 30]) : '', lead: lead.length ? band(median(lead), [DAY, 7 * DAY, 30 * DAY]) : '', cfr: cfr == null ? '' : band(cfr, [0.05, 0.1, 0.15]), mttr: restore.length ? band(median(restore), [36e5, DAY, 7 * DAY]) : '' } };
+}
+const fmtFreq = d => (d >= 1 ? `${Math.round(d * 10) / 10} / day` : d * 7 >= 1 ? `${Math.round(d * 70) / 10} / week` : d > 0 ? `${Math.round(d * 300) / 10} / month` : '0');
+function doraCard(M) {
+  const D = repDora(M);
+  if (!D.n) return repCard('Delivery performance (DORA)', none('No deploy has been recorded in this period. Every deploy from the Deploy tab is counted.'));
+  const t = (label, value, sub, rate) => kpi(label, value, rate ? `${sub} · ${rate}` : sub);
+  return repCard('Delivery performance (DORA)', `<div class="kpis">
+    ${t('Deployment frequency', fmtFreq(D.perDay), `${fmtN(D.deployed)} deploys`, D.rate.freq)}
+    ${t('Lead time for changes', fmtSpan(D.lead), 'commit to deployed', D.rate.lead)}
+    ${t('Change failure rate', D.cfr == null ? '—' : Math.round(D.cfr * 100) + '%', `${fmtN(D.bad)} of ${fmtN(D.n)} deploys · ${fmtN(D.rollbacks)} rolled back`, D.rate.cfr)}
+    ${t('Time to restore', fmtSpan(D.restore), 'failed deploy to a good one', D.rate.mttr)}</div>`, 'from the Releases records');
+}
+
 /* ---------- The view ---------- */
 function viewReports() {
   if (!S.projects.length) return `<div class="page-head"><h1>Reports</h1></div><div class="empty card">${I.activity}<h3>Add a project first</h3><p>Reports are built from your tasks, deploys, backups and git history.</p></div>`;
@@ -372,6 +402,7 @@ function viewReports() {
   return `<div class="page-head"><h1>Reports</h1></div>${filters}${note}
     ${empty ? `<div class="alert warn" style="cursor:default">${I.alert}<span>Nothing was recorded in this period${loading ? ' yet' : ''}. Pick a longer range, or another project.</span></div>` : ''}
     <div class="kpis">${tiles}</div>
+    ${doraCard(M)}
     <div class="cols2 rrow">
       ${repCard('Tasks created and completed', legend([['Completed', 'var(--s1)'], ['Created', 'var(--s2)']]) + taskChart)}
       ${repCard('Open tasks', openChart, 'tasks that still exist')}
@@ -407,6 +438,8 @@ function repSummary(M) {
   if (cur.medianLead != null) L.push(`Median lead time: ${fmtSpan(cur.medianLead)}`);
   L.push(`Commits: ${fmtN(cur.commits.length)} (+${fmtN(cur.add)} / −${fmtN(cur.del)} lines)`);
   L.push(`Deploys: ${fmtN(dep.length)}${dep.length ? ` (${pctOf(okCount(dep), dep.length)}% succeeded)` : ''} · Backups: ${fmtN(bak.length)} · Database updates: ${fmtN(cur.runs.filter(r => r.k === 'dbupdate').length)} · Publishes: ${fmtN(cur.runs.filter(r => r.k === 'publish').length)}`);
+  const D = repDora(M);
+  if (D.n) L.push(`Delivery (DORA): ${fmtFreq(D.perDay)} deploys, lead time ${fmtSpan(D.lead)}, change failure rate ${D.cfr == null ? '—' : Math.round(D.cfr * 100) + '%'}, time to restore ${fmtSpan(D.restore)}`);
   L.push(`Active days: ${fmtN(cur.activeDays)} of ${fmtN(rng.days)}`, '');
   for (const p of orderedProjects()) {
     const d = cur.done.filter(x => x.pid === p.id).sort((a, b) => a.t.doneAt - b.t.doneAt);

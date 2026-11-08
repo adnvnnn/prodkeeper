@@ -1,12 +1,22 @@
 'use strict';
 
 const chip = (text, cls = '', icon = '') => `<span class="chip ${cls}">${icon}${text}</span>`;
-const TABS = [['tasks', 'Tasks', I.tick], ['git', 'Git & branches', I.branch], ['deploy', 'Deploy', I.deploy], ['db', 'Databases', I.db], ['backup', 'Backup', I.folder], ['ci', 'CI/CD', I.activity], ['vault', 'Vault', I.key], ['settings', 'Settings', I.sliders], ['status', 'Live status', I.globe]];
+const TABS = [['tasks', 'Tasks', I.tick], ['git', 'Git & branches', I.branch], ['deploy', 'Deploy', I.deploy], ['release', 'Releases', I.tag], ['flags', 'Feature flags', I.sliders], ['db', 'Databases', I.db], ['backup', 'Backup', I.folder], ['ci', 'CI/CD', I.activity], ['vault', 'Vault', I.key], ['settings', 'Settings', I.sliders], ['status', 'Live status', I.globe]];
 const TEMPLATES = [
   { t: 'SSH + git pull + pm2', cmd: 'ssh user@host "cd /var/www/app && git pull && npm ci --omit=dev && pm2 restart app"' },
   { t: 'Docker Compose on a server', cmd: 'ssh user@host "cd /srv/app && docker compose pull && docker compose up -d"' },
   { t: 'Build and copy with scp', cmd: 'npm ci && npm run build && scp -r dist/* user@host:/var/www/app/' },
   { t: 'npm run deploy', cmd: 'npm run deploy' },
+  /* containers, orchestration, infrastructure as code and GitOps: the plan / rollback fields are filled in too */
+  { t: 'Docker: build + push', cmd: 'docker build -t registry.example.com/app:%DEPLOY_VERSION% . && docker push registry.example.com/app:%DEPLOY_VERSION%' },
+  { t: 'Kubernetes: apply + rollout', cmd: 'kubectl apply -f k8s/ && kubectl rollout status deployment/app --timeout=180s', plan: 'kubectl diff -f k8s/', rollback: 'kubectl rollout undo deployment/app' },
+  { t: 'Helm upgrade', cmd: 'helm upgrade --install app ./chart --set image.tag=%DEPLOY_VERSION% --atomic --wait', plan: 'helm diff upgrade app ./chart --set image.tag=%DEPLOY_VERSION%', rollback: 'helm rollback app' },
+  { t: 'Kubernetes canary (Argo Rollouts)', cmd: 'kubectl argo rollouts set image app app=registry.example.com/app:%DEPLOY_VERSION% && kubectl argo rollouts promote app', strategy: 'canary', rollback: 'kubectl argo rollouts undo app' },
+  { t: 'Terraform plan + apply', cmd: 'terraform apply -auto-approve -input=false tfplan', plan: 'terraform init -input=false && terraform plan -input=false -no-color -out=tfplan', approval: 'type', rollback: 'terraform apply -auto-approve -input=false' },
+  { t: 'Ansible playbook', cmd: 'ansible-playbook -i inventory deploy.yml -e version=%DEPLOY_VERSION%', plan: 'ansible-playbook -i inventory deploy.yml --check --diff', rollback: 'ansible-playbook -i inventory deploy.yml -e version=%ROLLBACK_VERSION%' },
+  { t: 'GitOps: ArgoCD sync', cmd: 'argocd app sync app --prune && argocd app wait app --health', rollback: 'argocd app rollback app' },
+  { t: 'GitOps: bump image in manifests repo', cmd: 'git -C ..\manifests pull && cd ..\manifests && kustomize edit set image app=registry.example.com/app:%DEPLOY_VERSION% && git commit -am "Deploy %DEPLOY_VERSION%" && git push' },
+  { t: 'Blue-green on Docker Compose', cmd: 'docker compose -p app-%DEPLOY_SLOT% up -d --build', strategy: 'bluegreen', rollback: '' },
   /* Web Deploy (IIS on Windows Server); the password comes from the vault through the WD_PASS variable */
   { t: 'Web Deploy: publish + deploy (one step)', pub: true, env: 'WD_PASS=@server-password', cmd: '"C:\\Program Files\\IIS\\Microsoft Web Deploy V3\\msdeploy.exe" -verb:sync -source:contentPath="%PUBLISH_OUT%" -dest:contentPath="Default Web Site",computerName="https://SERVER:8172/msdeploy.axd",userName="SERVER\\deployer",password="%WD_PASS%",authType=Basic -enableRule:AppOffline -allowUntrusted' },
   { t: 'Web Deploy: publish profile', env: 'WD_PASS=@server-password', cmd: 'dotnet publish -c Release /p:PublishProfile=Production /p:Password=%WD_PASS%' },
@@ -95,7 +105,7 @@ function runButtons(p) {
 function viewProject() {
   const p = proj(V.pid);
   if (!p) { V.name = 'projects'; return viewProjects(); }
-  const tabs = { tasks: tabTasks, status: tabStatus, git: tabGit, deploy: tabDeploy, db: tabDatabases, backup: tabBackup, ci: tabCI, vault: p => vaultSection(p.id, false), settings: tabSettings };
+  const tabs = { tasks: tabTasks, status: tabStatus, git: tabGit, deploy: tabDeploy, release: tabRelease, flags: tabFlags, db: tabDatabases, backup: tabBackup, ci: tabCI, vault: p => vaultSection(p.id, false), settings: tabSettings };
   return `
     <div class="page-head"><h1>${esc(p.name)}</h1>
       ${SEV_LABEL[projSeverity(p.id)] ? `<span class="st ${projSeverity(p.id)}">${SEV_LABEL[projSeverity(p.id)]}</span>` : ''}
@@ -171,10 +181,10 @@ function tabDeploy(p) {
   const cards = p.deploys.map(d => {
     const r = lastRun(d.id, 'deploy'), env = p.envs.find(e => e.id === d.envId), run = isRunning(d.id);
     return `<div class="card section" ${dndItem('deploys', d.id)}>
-      <div class="row between"><h2 style="margin:0">${dndGrip}${I.deploy}${esc(d.name)} ${env ? chip(esc(env.name), 'soon', I.globe) : ''}${d.branch ? chip(esc(d.branch), '', I.branch) : ''}</h2>
+      <div class="row between"><h2 style="margin:0">${dndGrip}${I.deploy}${esc(d.name)} ${env ? chip(esc(env.name), 'soon', I.globe) : ''}${d.branch ? chip(esc(d.branch), '', I.branch) : ''}${d.strategy && d.strategy !== 'direct' ? chip(esc(d.strategy), 'soon') : ''}${d.approval && d.approval !== 'off' ? chip('Approval', 'today', I.lock) : ''}</h2>
         <div class="row"><button class="iconbtn" data-action="deploy-edit" data-id="${d.id}" title="Edit">${I.edit}</button><button class="btn primary" data-action="deploy-run" data-id="${d.id}" ${run ? 'disabled' : ''}>${I.play}${run ? 'Running…' : 'Deploy'}</button></div></div>
       <code class="cmd">${esc(d.command)}</code>
-      <div style="margin-top:8px">${pipelineStrip(p, d)}</div>
+      <div style="margin-top:8px">${pipelineStrip(p, d)}</div>${liveInfo(p, d)}
       <div class="sub" style="margin-top:8px">${r ? `Last run: ${runChip(r)} ${ago(r.start)}${dur(r)}` : 'Never run'}</div></div>`;
   }).join('');
   return `<div class="page-head" style="margin-top:0"><h2 style="margin:0;display:flex;align-items:center;gap:8px">${I.deploy}Deploy</h2><span class="sub">Git and CI status are checked and shown before running.</span><span class="grow"></span><button class="btn primary" data-action="deploy-new">${I.plus}Add deploy</button></div>
@@ -210,23 +220,48 @@ function ciBranches(p) {
   return [...new Set(list.filter(b => b.isRemote || (b.upstream && !b.gone)).map(b => short(b.isRemote ? b.name : b.upstream)))];
 }
 /** The GitHub Actions file that does the "CI" half automatically, built from what is already set up in this project:
- *  the Build and Test commands from Settings and the expected branches of the deploys */
-function ciYaml(p, det) {
+ *  the Build and Test commands from Settings and the expected branches of the deploys.
+ *  o: lint, coverage, security (dependency audit, secret scan, CodeQL), cache, matrix (OS x runtime versions), artifact, docker */
+function ciYaml(p, det, o = {}) {
   const def = C.git[p.id] && C.git[p.id].default;
   const branches = [...new Set([...p.deploys.map(d => d.branch), def, 'main'].filter(Boolean))].slice(0, 6);
   const own = { build: p.build.command.trim(), test: p.test.command.trim() };
-  const win = det.kind === 'dotnet' || !!(own.build || own.test);
+  const node = det.kind === 'node', dotnet = det.kind === 'dotnet', win = dotnet || !!(own.build || own.test);
+  const matrix = !!o.matrix && (node || dotnet);
   const ind = (txt, n) => txt.split(/\r?\n/).map(l => ' '.repeat(n) + l).join('\n');
   const step = (name, cmd, shell) => `      - name: ${name}\n${shell ? `        shell: ${shell}\n` : ''}        run: |\n${ind(cmd, 10)}`;
+  const upload = (name, path) => `      - uses: actions/upload-artifact@v4\n        with:\n          name: ${name}-\${{ runner.os }}-\${{ matrix.version || 'default' }}\n          path: ${path}\n          if-no-files-found: ignore`;
   const steps = ['      - uses: actions/checkout@v4'];
-  if (det.kind === 'node') steps.push('      - uses: actions/setup-node@v4\n        with:\n          node-version: 20\n          cache: npm', '      - run: npm ci');
-  if (det.kind === 'dotnet') steps.push('      - uses: actions/setup-dotnet@v4\n        with:\n          dotnet-version: 8.0.x', '      - run: dotnet restore');
-  const build = own.build ? [own.build, p.build.shell] : det.kind === 'node' ? (det.hasBuild ? ['npm run build', ''] : null) : det.kind === 'dotnet' ? ['dotnet build -c Release --no-restore', ''] : null;
-  const test = own.test ? [own.test, p.test.shell] : det.kind === 'node' ? (det.hasTest ? ['npm test', ''] : null) : det.kind === 'dotnet' ? ['dotnet test -c Release', ''] : null;
+  if (node) steps.push(`      - uses: actions/setup-node@v4\n        with:\n          node-version: ${matrix ? '${{ matrix.version }}' : 20}${o.cache === false ? '' : '\n          cache: npm'}`, '      - run: npm ci');
+  if (dotnet) {
+    steps.push(`      - uses: actions/setup-dotnet@v4\n        with:\n          dotnet-version: ${matrix ? '${{ matrix.version }}' : '8.0.x'}`);
+    if (o.cache !== false) steps.push("      - uses: actions/cache@v4\n        with:\n          path: ~/.nuget/packages\n          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}\n          restore-keys: nuget-${{ runner.os }}-");
+    steps.push('      - run: dotnet restore');
+  }
+  if (o.lint && node) steps.push(step('Lint', 'npm run lint --if-present', ''));
+  if (o.lint && dotnet) steps.push(step('Format check', 'dotnet format --verify-no-changes --no-restore', ''));
+  const build = own.build ? [own.build, p.build.shell] : node ? (det.hasBuild ? ['npm run build', ''] : null) : dotnet ? ['dotnet build -c Release --no-restore', ''] : null;
+  let test = own.test ? [own.test, p.test.shell] : node ? (det.hasTest ? ['npm test', ''] : null) : dotnet ? ['dotnet test -c Release', ''] : null;
+  if (o.coverage && !own.test && test) test = node ? ['npx --yes c8 --reporter=text-summary --reporter=lcov npm test', ''] : ['dotnet test -c Release --no-build --collect:"XPlat Code Coverage" --results-directory coverage', ''];
   if (build) steps.push(step('Build', build[0], build[1]));
   if (test) steps.push(step('Test', test[0], test[1]));
+  if (o.coverage && test) steps.push(upload('coverage', 'coverage'));
+  if (o.artifact && node && det.hasBuild) steps.push(upload('build', 'dist'));
+  if (o.artifact && dotnet) steps.push(step('Publish', 'dotnet publish -c Release -o publish', ''), upload('publish', 'publish'));
   if (!build && !test) steps.push('      # TODO: no build or test command was found. Add your own steps here, or set the Build / Test commands in ProdKeeper Settings and create this file again.');
   const vars = [p.build.envSpec, p.test.envSpec].join('\n').split(/\r?\n/).map(l => l.trim()).filter(l => /^[A-Za-z_]\w*=/.test(l)).map(l => { const i = l.indexOf('='), v = l.slice(i + 1); return `      ${l.slice(0, i)}: ${v.startsWith('@') ? '${{ secrets.' + l.slice(0, i) + ' }}' : JSON.stringify(v)}`; });
+  const jobs = [`  test:
+    runs-on: ${matrix ? '${{ matrix.os }}' : win ? 'windows-latest' : 'ubuntu-latest'}
+${matrix ? `    strategy:\n      fail-fast: false\n      matrix:\n        os: [ubuntu-latest, windows-latest]\n        version: ${node ? '[18, 20, 22]' : "['8.0.x', '9.0.x']"}\n` : ''}${vars.length ? `    env:\n${[...new Set(vars)].join('\n')}\n` : ''}    steps:
+${steps.join('\n')}`];
+  if (o.security && (node || dotnet)) { // runs next to the test job, so it costs no extra waiting time
+    const audit = node
+      ? "      - uses: actions/setup-node@v4\n        with:\n          node-version: 20\n      - run: npm ci --ignore-scripts\n      - name: Dependency audit\n        run: npm audit --audit-level=high"
+      : "      - uses: actions/setup-dotnet@v4\n        with:\n          dotnet-version: 8.0.x\n      - name: Dependency audit\n        run: |\n          dotnet list package --vulnerable --include-transitive 2>&1 | tee audit.txt\n          if grep -q 'has the following vulnerable packages' audit.txt; then exit 1; fi";
+    jobs.push(`  security:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n${audit}\n      - name: Secret scan\n        uses: gitleaks/gitleaks-action@v2\n        env:\n          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}`);
+    jobs.push(`  codeql:\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      actions: read\n      security-events: write\n    steps:\n      - uses: actions/checkout@v4\n      - uses: github/codeql-action/init@v3\n        with:\n          languages: ${node ? 'javascript-typescript' : 'csharp'}\n${dotnet ? '      - uses: github/codeql-action/autobuild@v3\n' : ''}      - uses: github/codeql-action/analyze@v3`);
+  }
+  if (o.docker) jobs.push("  docker:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: docker/setup-buildx-action@v3\n      - uses: docker/build-push-action@v6\n        with:\n          context: .\n          push: false\n          tags: app:${{ github.sha }}\n          cache-from: type=gha\n          cache-to: type=gha,mode=max");
   return `# Runs the build and tests on GitHub for every push, so ProdKeeper (CI/CD tab) can show whether the code is healthy.
 # Created by ProdKeeper from this project's Build / Test settings and its deploy branches.
 name: CI
@@ -235,32 +270,40 @@ on:
     branches: [${branches.map(b => `'${b}'`).join(', ')}]
   pull_request:
   workflow_dispatch:
+concurrency:
+  group: ci-\${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
 jobs:
-  test:
-    runs-on: ${win ? 'windows-latest' : 'ubuntu-latest'}
-${vars.length ? `    env:\n${[...new Set(vars)].join('\n')}\n` : ''}    steps:
-${steps.join('\n')}
+${jobs.join('\n')}
 `;
 }
+const CI_OPTS = [['lint', 'Lint / format check'], ['coverage', 'Code coverage'], ['security', 'Security: dependency audit, secret scan, CodeQL'], ['cache', 'Cache dependencies'], ['matrix', 'Matrix: Linux + Windows, several runtime versions'], ['artifact', 'Upload build artifacts'], ['docker', 'Docker image build']];
 async function ciSetupModal() {
   const p = proj(V.pid);
   if (!p.repoPath) return toast('Set the git repository folder of the project first', true);
   const det = await native.ci.detect(p.repoPath);
   if (det.error) return toast(det.error, true);
   const kinds = { node: 'Node.js project', dotnet: '.NET project', unknown: 'unknown project type' };
+  const on = { lint: det.kind === 'node', cache: true, security: det.kind !== 'unknown', artifact: true, docker: !!det.hasDocker };
   openModal(`<form id="ciYamlForm" data-pid="${p.id}">${modalHead('Create the CI workflow')}
     <div class="body">
       <div class="sub">Detected: <b>${kinds[det.kind]}</b>. The file <code>${det.file}</code> is built from the Build and Test commands in Settings and the expected branches of your deploys. You can edit it before it is created.</div>
       ${det.exists ? `<div class="check-item warn">${I.alert}<span>${det.file} already exists. It will not be overwritten.</span></div>` : ''}
-      <div class="field"><textarea name="yaml" dir="ltr" spellcheck="false" style="min-height:300px;font-family:Consolas,monospace">${esc(ciYaml(p, det))}</textarea></div>
+      <div class="cols2" id="ciOpts" style="margin-top:8px">${CI_OPTS.map(([k, l]) => `<label class="chk"><input type="checkbox" data-ciopt="${k}" ${on[k] ? 'checked' : ''}> ${l}</label>`).join('')}</div>
+      <div class="sub">Jobs without a dependency on each other (tests, security, CodeQL, Docker) run in parallel on GitHub. Changing an option writes the text below again.</div>
+      <div class="field"><textarea name="yaml" dir="ltr" spellcheck="false" style="min-height:300px;font-family:Consolas,monospace"></textarea></div>
       <div id="ciSecrets" class="sub"></div>
       <div class="sub">After it is created, commit and push it from the Git tab. GitHub starts running it on the next push.</div>
     </div><footer><span class="grow"></span><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" ${det.exists ? 'disabled' : ''}>Create file</button></footer></form>`, { wide: true });
   const ta = $('#ciYamlForm textarea'), note = () => {
-    const names = [...new Set([...ta.value.matchAll(/secrets\.(\w+)/g)].map(m => m[1]))];
+    const names = [...new Set([...ta.value.matchAll(/secrets\.(\w+)/g)].map(m => m[1]))].filter(n => n !== 'GITHUB_TOKEN');
     $('#ciSecrets').innerHTML = names.length ? `Add these as secrets in GitHub (Settings → Secrets and variables → Actions), with the same values as in your Vault: ${names.map(n => `<code>${esc(n)}</code>`).join(' ')}` : '';
   };
-  ta.addEventListener('input', note); note();
+  const gen = () => { ta.value = ciYaml(p, det, Object.fromEntries([...document.querySelectorAll('#ciOpts input')].map(i => [i.dataset.ciopt, i.checked]))); note(); };
+  $('#ciOpts').addEventListener('change', gen);
+  ta.addEventListener('input', note); gen();
 }
 /** The CI run for a commit (matched by its hash) or, for a branch, the newest run on it; null when GitHub has none or CI is not set up */
 const ciOfCommit = (p, hash) => { const c = C.ci[p.id]; return c && c.runs && hash ? c.runs.find(r => r.sha && r.sha.startsWith(hash)) || null : null; };
@@ -290,13 +333,14 @@ function tabCI(p) {
       <button class="btn" data-action="open-url" data-url="https://github.com/${esc(p.ci.repo)}/actions">${I.ext}GitHub Actions</button><button class="btn" data-action="ci-refresh">${I.refresh}Refresh</button></div>
     ${noWf ? `<div class="alert warn">${I.alert}<span>No GitHub Actions workflow exists in this repository yet, so nothing is tested automatically. Create the workflow file, commit it and push.</span></div>` : ''}
     ${pipelines}
+    ${prSection(p)}
     ${dispatch}
     <div class="card section"><h2>Recent runs</h2>${!c ? '<div class="sub">Loading…</div>' : c.error ? `<div class="alert bad">${I.alert}<span>${esc(c.error)}</span></div>` : runs || '<div class="sub">No runs recorded yet</div>'}</div>`;
 }
 
 /* ---------- History ---------- */
 function histRow(h) {
-  const p = proj(h.projectId), kind = { deploy: 'Deploy', backup: 'Backup', dbupdate: 'Database update', dbrestore: 'Database restore', publish: 'Publish', git: 'Git', run: 'Run', build: 'Build', test: 'Test' }[h.kind] || h.kind;
+  const p = proj(h.projectId), kind = { deploy: 'Deploy', backup: 'Backup', dbupdate: 'Database update', dbrestore: 'Database restore', publish: 'Publish', git: 'Git', run: 'Run', build: 'Build', test: 'Test', plan: 'Plan', rollback: 'Rollback' }[h.kind] || h.kind;
   return `<div class="trow" data-action="log-open" data-id="${h.id}">${runChip(h)}<span class="tt">${esc(h.title)}</span>
     ${p ? chip(esc(p.name), '') : ''}<span class="sub">${fmtTs(h.start)}${dur(h)}</span></div>`;
 }
@@ -304,7 +348,7 @@ function viewHistory() {
   let list = S.history.filter(h => (!V.hKind || h.kind === V.hKind) && (!V.hProj || h.projectId === V.hProj));
   const sel = (k, opts, val) => `<select data-hf="${k}">${opts.map(([v, l]) => `<option value="${v}" ${String(v) === String(val) ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
   return `<div class="page-head"><h1>Operation history</h1><span class="sub">${num(list.length)} ${list.length === 1 ? 'entry' : 'entries'}</span><span class="grow"></span><button class="btn danger" data-action="hist-clear">Clear</button></div>
-    <div class="filters">${sel('hKind', [['', 'All types'], ['deploy', 'Deploy'], ['backup', 'Backup'], ['dbupdate', 'Database update'], ['dbrestore', 'Database restore'], ['publish', 'Publish'], ['git', 'Git'], ['run', 'Run'], ['build', 'Build'], ['test', 'Test']], V.hKind)}
+    <div class="filters">${sel('hKind', [['', 'All types'], ['deploy', 'Deploy'], ['backup', 'Backup'], ['dbupdate', 'Database update'], ['dbrestore', 'Database restore'], ['publish', 'Publish'], ['git', 'Git'], ['run', 'Run'], ['build', 'Build'], ['test', 'Test'], ['plan', 'Plan'], ['rollback', 'Rollback']], V.hKind)}
     ${sel('hProj', [['', 'All projects'], ...S.projects.map(p => [p.id, p.name])], V.hProj)}</div>
     <div class="card section">${list.length ? list.slice(0, 150).map(histRow).join('') : '<div class="empty">No operations recorded yet</div>'}</div>`;
 }
@@ -557,6 +601,7 @@ async function deployModal(did) {
         <div class="field"><label>Pipeline: database update first</label><select name="dbUpdateId"><option value="">— None —</option>${p.ops.filter(o => o.type === 'db').map(o => `<option value="${o.id}" ${d.dbUpdateId === o.id ? 'selected' : ''}>${esc(dbRefLabel(p, o, false))}</option>`).join('')}</select></div></div>
       <label class="chk"><input type="checkbox" name="preTest" ${d.preTest ? 'checked' : ''}> Run the project's tests first (Settings → Test); a failing test stops the deploy</label>
       <label class="chk"><input type="checkbox" name="auto" ${d.auto ? 'checked' : ''}> Deploy automatically when CI succeeds on the expected branch (only while this app is open and unlocked)</label>
+      ${deliveryFields(d)}
     </div>${footerBtns(did ? `<button type="button" class="btn danger" data-action="deploy-del" data-id="${did}">${I.trash}Delete</button>` : '')}</form>`);
 }
 
@@ -667,7 +712,7 @@ function branchModal() {
   const p = proj(V.pid), gd = C.gd[p.id], g = C.git[p.id];
   const locals = ((gd && gd.br.branches) || []).filter(b => !b.isRemote);
   openModal(`<form id="branchForm">${modalHead('New branch')}
-    <div class="body"><div class="field"><label>Branch name</label><input type="text" name="name" dir="ltr" required placeholder="feature/my-change"></div>
+    <div class="body"><div class="field"><label>Branch name</label><input type="text" name="name" dir="ltr" required placeholder="feature/my-change">${p.branching ? `<div class="sub">${p.branching === 'gitflow' ? 'GitFlow: use feature/…, release/… or hotfix/… (from Releases → Branching strategy)' : 'Trunk-based: keep the branch short-lived and merge it back to the default branch often'}</div>` : ''}</div>
       <div class="field"><label>Create from</label><select name="from"><option value="">Current branch (${esc(g.branch)})</option>${locals.filter(b => !b.current).map(b => `<option value="${esc(b.name)}">${esc(b.name)}</option>`).join('')}</select></div></div>
     ${footerBtns().replace('Save', 'Create')}</form>`, { small: true });
 }

@@ -19,6 +19,8 @@ const normProject = p => normTasks({
   test: { command: '', shell: 'cmd', envSpec: '', dbId: '', ...(p.test || {}) },
   sprints: Array.isArray(p.sprints) ? p.sprints : [],
   taskSeq: p.taskSeq || 0,
+  releases: Array.isArray(p.releases) ? p.releases : [], flags: Array.isArray(p.flags) ? p.flags : [],
+  flagsFile: typeof p.flagsFile === 'string' ? p.flagsFile : '', branching: ['trunk', 'gitflow'].includes(p.branching) ? p.branching : '',
 });
 /** Fills in the fields tasks got when backlog / sprints / estimates / git links were added, and numbers old tasks */
 function normTasks(p) {
@@ -172,6 +174,9 @@ async function enterTab() {
   if (!p) return;
   const t = V.tab, jobs = [loadGit(p)];
   if (t === 'git' || t === 'ci') jobs.push(loadGitDetail(p));
+  if (t === 'deploy') jobs.push(loadDrift(p));
+  if (t === 'release') jobs.push(loadRelease(p), loadGitDetail(p), loadCI(p));
+  if (t === 'ci') jobs.push(loadPRs(p));
   if (t === 'tasks') jobs.push(loadTaskBranches(p));
   if (t === 'ci' || t === 'tasks' || t === 'git') jobs.push(loadCI(p));
   if (t === 'ci') jobs.push(loadWf(p));
@@ -333,7 +338,7 @@ function appendLog(id, text) {
 }
 native.job.onOutput(({ id, text }) => appendLog(id, text));
 
-async function runJob({ pid, kind, refId, title, spec, silent, auto }) {
+async function runJob({ pid, kind, refId, title, spec, silent, auto, deferHealth }) {
   if (isRunning(refId)) return toast('This job is already running', true);
   const id = uid();
   const h = { id, projectId: pid, kind, refId, title, start: Date.now(), status: 'running', log: '' };
@@ -364,22 +369,25 @@ async function runJob({ pid, kind, refId, title, spec, silent, auto }) {
   }
   if (!silent) toast(`${title}: ${h.status === 'ok' ? 'success' : h.status === 'killed' ? 'stopped' : 'failed'}`, h.status !== 'ok' && h.status !== 'killed');
   if (kind === 'backup') { const p = proj(pid), b = p && p.backups.find(x => x.id === refId); if (b) await loadBackups(b); }
-  if (kind === 'deploy' && h.status === 'ok') postDeployHealth(pid, refId, id, h);
+  if (kind === 'deploy' && h.status === 'ok' && !deferHealth) postDeployHealth(pid, refId, id, h);
   softRender();
   return h;
 }
-async function postDeployHealth(pid, did, runId, h) {
+/** Checks the site after a deploy and writes the result into the deploy's log. Returns the check result, or null when there is nothing to check.
+ *  url: check this address instead of the environment's (the idle blue-green slot) */
+async function postDeployHealth(pid, did, runId, h, { wait = 4000, url } = {}) {
   const p = proj(pid), d = p && p.deploys.find(x => x.id === did), e = d && p.envs.find(x => x.id === d.envId);
-  if (!e || !e.url || d.noHealth) return;
-  await sleep(4000);
-  const r = await checkEnv(p, e);
-  const line = `\nPost-deploy health check (${e.name || e.url}): ${r.ok ? `✓ up (HTTP ${r.status}, ${r.ms}ms)` : '✗ ' + (r.error || 'HTTP ' + r.status)}\n`;
+  if (!d || d.noHealth || (!url && !(e && e.url))) return null;
+  await sleep(wait);
+  const r = url ? await native.net.check({ url, method: 'GET', headers: '', expect: '', keyword: '', projectId: p.id }) : await checkEnv(p, e);
+  const line = `\nPost-deploy health check (${url || e.name || e.url}): ${r.ok ? `✓ up (HTTP ${r.status}, ${r.ms}ms)` : '✗ ' + (r.error || 'HTTP ' + r.status)}\n`;
   h.log += line;
   const pre = $('#runLog');
   if (pre && $('#modal').hidden === false && $('#runStatus')) { pre.append(line); pre.scrollTop = pre.scrollHeight; }
   save();
-  if (!r.ok) toast(`Warning: ${e.name || e.url} is not responding after the deploy`, true);
+  if (!r.ok) toast(`Warning: ${url || e.name || e.url} is not responding after the deploy`, true);
   softRender();
+  return r;
 }
 /** Opens the app's URL in the browser as soon as it answers (any HTTP status); gives up after 3 minutes or when the app stops */
 async function openWhenReady(p) {
@@ -396,10 +404,12 @@ async function openWhenReady(p) {
   }
   if (isRunning(p.id)) toast(`${p.name}: ${url} did not respond within 3 minutes`, true);
 }
-/** pubOut: the zip or folder the "publish first" step produced; the deploy command receives it as PUBLISH_OUT */
-function deploySpec(p, d, pubOut = '') {
-  const envSpec = [d.envSpec, pubOut && `PUBLISH_OUT=${pubOut}`].filter(Boolean).join('\n');
-  return { command: d.command, shell: d.shell, cwd: d.cwd || p.repoPath || '', envSpec, dbId: d.dbId || '' };
+/** pubOut: the zip or folder the "publish first" step produced; the deploy command receives it as PUBLISH_OUT.
+ *  extra: more variables (release info, strategy stage); command: replaces the deploy command (plan, switch, rollback) */
+function deploySpec(p, d, pubOut = '', extra = {}, command) {
+  const vars = Object.entries({ ...(pubOut ? { PUBLISH_OUT: pubOut } : {}), ...extra }).filter(([, v]) => v !== '' && v != null).map(([k, v]) => `${k}=${String(v).replace(/[\r\n]+/g, ' ')}`);
+  const envSpec = [d.envSpec, ...vars].filter(Boolean).join('\n');
+  return { command: command || d.command, shell: d.shell, cwd: d.cwd || p.repoPath || '', envSpec, dbId: d.dbId || '' };
 }
 function backupSpec(p, b) {
   return { cwd: b.cwd || p.repoPath || '', envSpec: b.envSpec || '', dbId: b.dbId || '', backup: { name: b.name, type: b.type, source: b.source, destDir: b.destDir, command: b.command, shell: b.shell, exclude: b.exclude, keep: b.keep } };
@@ -421,32 +431,6 @@ function vaultWarnings(p, d) {
 }
 const testSpec = p => ({ command: p.test.command, shell: p.test.shell, cwd: p.repoPath || '', envSpec: p.test.envSpec, dbId: p.test.dbId });
 const runTests = (p, opts = {}) => runJob({ pid: p.id, kind: 'test', refId: p.id + ':test', title: `Test: ${p.name}`, spec: testSpec(p), ...opts });
-/** The deploy as one pipeline: the project's tests first (if the deploy asks for them), then the deploy itself; a failing test stops it */
-async function runPipeline(p, d, { auto } = {}) {
-  if (d.preTest && p.test.command) {
-    const t = await runTests(p, { silent: auto, auto });
-    if (!t || t.status !== 'ok') return toast(`Deploy "${d.name}" stopped: ${t ? 'the tests failed' : 'the tests could not start'}`, true);
-  }
-  const bk = d.backupId && p.backups.find(x => x.id === d.backupId);
-  if (bk) {
-    const b = await runBackup(p, bk, auto, auto);
-    if (!b || b.status !== 'ok') return toast(`Deploy "${d.name}" stopped: the backup "${bk.name}" ${b ? 'failed' : 'could not start'}`, true);
-  }
-  const pub = d.publishId && p.ops.find(x => x.id === d.publishId && x.type === 'publish');
-  let pubOut = '';
-  if (pub) {
-    const r = await runOp(p, pub, { silent: auto, auto });
-    if (!r || r.status !== 'ok') return toast(`Deploy "${d.name}" stopped: publishing "${pub.name}" ${r ? 'failed' : 'could not start'}`, true);
-    pubOut = r.file || '';
-  }
-  const dbu = d.dbUpdateId && p.ops.find(x => x.id === d.dbUpdateId && x.type === 'db');
-  if (dbu) {
-    const r = await runDbUpdate(p, dbu, !bk, { silent: auto, auto }); // the deploy's own backup, when there is one, already covers the update
-    if (!r || r.status !== 'ok') return toast(`Deploy "${d.name}" stopped: the database update "${dbu.name}" ${r ? 'failed' : 'did not run'}`, true);
-  }
-  return runJob({ pid: p.id, kind: 'deploy', refId: d.id, title: `Deploy: ${d.name}${auto ? ' (after CI)' : ''}`, spec: deploySpec(p, d, pubOut), silent: auto, auto });
-}
-
 /** Pre-deploy checks: branch, uncommitted changes, unpushed commits, CI status */
 async function deployClick(pid, did) {
   const p = proj(pid), d = p.deploys.find(x => x.id === did);
@@ -478,6 +462,16 @@ async function deployClick(pid, did) {
     } else if (r.error) { items.push(['warn', 'Could not read CI status: ' + r.error]); blocked = gate; }
     else if (gate) { items.push(['warn', 'There is no CI run on this branch yet']); blocked = true; }
   }
+  if (p.branching && d.branch) {
+    const def = (g0 => g0 && g0.default)(C.git[pid]) || 'main', fixed = [def, 'main', 'master'];
+    if (p.branching === 'trunk' && !fixed.includes(d.branch)) items.push(['warn', `Branching strategy is trunk-based: deploys should come from "${def}", not "${d.branch}"`]);
+    if (p.branching === 'gitflow' && !fixed.includes(d.branch) && !/^(release|hotfix)\//.test(d.branch)) items.push(['warn', `Branching strategy is GitFlow: deploys should come from main, a release/ or a hotfix/ branch, not "${d.branch}"`]);
+  }
+  const strat = STRATEGIES.find(s => s[0] === (d.strategy || 'direct'));
+  if (d.strategy && d.strategy !== 'direct') items.push(['ok', `Strategy: ${strat[1]}; the site is checked between the steps`]);
+  if (d.planCommand) items.push(['ok', 'A plan (dry run) runs first and is shown for approval']);
+  if (d.approval && d.approval !== 'off') items.push(['ok', d.approval === 'type' ? 'You will be asked to type the environment name before anything changes' : 'You will be asked to approve before anything changes']);
+  if (d.autoRollback) items.push(canRollback(p, d) || !currentRelease(p, d) ? ['ok', 'The deploy is rolled back automatically if it fails or the site is unhealthy afterwards'] : ['warn', 'Automatic rollback is on, but there is no rollback command and no earlier build to deploy again']);
   if (d.preTest && p.test.command) items.push(['ok', 'The project tests run first; the deploy stops if they fail']);
   else if (d.preTest) items.push(['warn', 'This deploy should run tests first, but no test command is set (Settings → Test)']);
   if (d.backupId) {
@@ -569,7 +563,7 @@ function saveDeploy(form) {
   const name = String(fd.get('name')).trim(), command = String(fd.get('command')).trim();
   if (!name || !command) return;
   const data = { name, command, envId: fd.get('envId'), shell: fd.get('shell'), cwd: String(fd.get('cwd')).trim(), branch: String(fd.get('branch')).trim(), envSpec: String(fd.get('envSpec') ?? '').trim(), dbId: String(fd.get('dbId') || ''), noHealth: !fd.get('health'),
-    preTest: !!fd.get('preTest'), backupId: String(fd.get('backupId') || ''), publishId: String(fd.get('publishId') || ''), dbUpdateId: String(fd.get('dbUpdateId') || ''), ciGate: fd.get('ciGate'), auto: !!fd.get('auto') && !!String(fd.get('branch')).trim() };
+    preTest: !!fd.get('preTest'), backupId: String(fd.get('backupId') || ''), publishId: String(fd.get('publishId') || ''), dbUpdateId: String(fd.get('dbUpdateId') || ''), ciGate: fd.get('ciGate'), auto: !!fd.get('auto') && !!String(fd.get('branch')).trim(), ...readDelivery(fd) };
   const old = did && p.deploys.find(x => x.id === did);
   if (data.auto && !(old && old.auto)) data.autoSince = Date.now(); // only CI runs that finish after this switch is turned on can trigger it
   if (old) Object.assign(old, data); else p.deploys.push({ id: uid(), ...data });
@@ -702,6 +696,13 @@ const actions = {
   tpl: el => {
     const t = TEMPLATES[el.dataset.i], env = document.querySelector('#deployForm [name=envSpec]');
     document.querySelector('#deployForm [name=command]').value = t.cmd;
+    const form = document.querySelector('#deployForm');
+    for (const [k, v] of Object.entries({ planCommand: t.plan, rollbackCommand: t.rollback, strategy: t.strategy, approval: t.approval })) {
+      if (v === undefined) continue;
+      const f = form.elements[k];
+      if (f) { f.value = v; if (k === 'strategy' || k === 'approval') ddSync(f); }
+    }
+    if (t.plan || t.rollback) form.querySelector('details.dlv').open = true;
     if (t.pub) {
       // one step: make sure a folder publish exists and run it first
       const p = proj(V.pid), sel = document.querySelector('#deployForm [name=publishId]');

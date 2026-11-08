@@ -301,6 +301,10 @@ app.whenReady().then(() => {
   h('ci:action', net.ciAction);
   h('ci:detect', scaffold.detect);
   h('ci:scaffold', scaffold.write);
+  h('ci:prs', net.prList);
+  h('ci:prAction', net.prAction);
+  h('ci:release', net.releaseCreate);
+  h('flags:write', scaffold.writeFlags);
 
   /* Background: tray, notifications, global shortcut */
   h('app:prefs', () => ({ ...prefs, packaged: app.isPackaged }));
