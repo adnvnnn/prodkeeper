@@ -1,12 +1,17 @@
 'use strict';
 
 const chip = (text, cls = '', icon = '') => `<span class="chip ${cls}">${icon}${text}</span>`;
-const TABS = [['tasks', 'Tasks', I.tick], ['git', 'Git & branches', I.branch], ['deploy', 'Deploy', I.deploy], ['backup', 'Backup', I.db], ['ci', 'CI/CD', I.activity], ['vault', 'Vault', I.key], ['settings', 'Settings', I.sliders], ['status', 'Live status', I.globe]];
+const TABS = [['tasks', 'Tasks', I.tick], ['git', 'Git & branches', I.branch], ['deploy', 'Deploy', I.deploy], ['db', 'Databases', I.db], ['backup', 'Backup', I.folder], ['ci', 'CI/CD', I.activity], ['vault', 'Vault', I.key], ['settings', 'Settings', I.sliders], ['status', 'Live status', I.globe]];
 const TEMPLATES = [
   { t: 'SSH + git pull + pm2', cmd: 'ssh user@host "cd /var/www/app && git pull && npm ci --omit=dev && pm2 restart app"' },
   { t: 'Docker Compose on a server', cmd: 'ssh user@host "cd /srv/app && docker compose pull && docker compose up -d"' },
   { t: 'Build and copy with scp', cmd: 'npm ci && npm run build && scp -r dist/* user@host:/var/www/app/' },
   { t: 'npm run deploy', cmd: 'npm run deploy' },
+  /* Web Deploy (IIS on Windows Server); the password comes from the vault through the WD_PASS variable */
+  { t: 'Web Deploy: publish + deploy (one step)', pub: true, env: 'WD_PASS=@server-password', cmd: '"C:\\Program Files\\IIS\\Microsoft Web Deploy V3\\msdeploy.exe" -verb:sync -source:contentPath="%PUBLISH_OUT%" -dest:contentPath="Default Web Site",computerName="https://SERVER:8172/msdeploy.axd",userName="SERVER\\deployer",password="%WD_PASS%",authType=Basic -enableRule:AppOffline -allowUntrusted' },
+  { t: 'Web Deploy: publish profile', env: 'WD_PASS=@server-password', cmd: 'dotnet publish -c Release /p:PublishProfile=Production /p:Password=%WD_PASS%' },
+  { t: 'Web Deploy: sync folder (msdeploy)', env: 'WD_PASS=@server-password', cmd: '"C:\\Program Files\\IIS\\Microsoft Web Deploy V3\\msdeploy.exe" -verb:sync -source:contentPath="%PUBLISH_OUT%" -dest:contentPath="Default Web Site",computerName="https://SERVER:8172/msdeploy.axd",userName="SERVER\\deployer",password="%WD_PASS%",authType=Basic -enableRule:AppOffline -allowUntrusted' },
+  { t: 'Web Deploy: zip package (msdeploy)', env: 'WD_PASS=@server-password', cmd: '"C:\\Program Files\\IIS\\Microsoft Web Deploy V3\\msdeploy.exe" -verb:sync -source:package="%PUBLISH_OUT%" -dest:auto,computerName="https://SERVER:8172/msdeploy.axd",userName="SERVER\\deployer",password="%WD_PASS%",authType=Basic -setParam:name="IIS Web Application Name",value="Default Web Site" -allowUntrusted' },
 ];
 const lastOfProject = (p, kind) => S.history.find(h => h.projectId === p.id && h.kind === kind && h.status !== 'running');
 const dur = h => (h.end ? ' · ' + fmtSec((h.end - h.start) / 1000) : '');
@@ -90,7 +95,7 @@ function runButtons(p) {
 function viewProject() {
   const p = proj(V.pid);
   if (!p) { V.name = 'projects'; return viewProjects(); }
-  const tabs = { tasks: tabTasks, status: tabStatus, git: tabGit, deploy: tabDeploy, backup: tabBackup, ci: tabCI, vault: p => vaultSection(p.id, false), settings: tabSettings };
+  const tabs = { tasks: tabTasks, status: tabStatus, git: tabGit, deploy: tabDeploy, db: tabDatabases, backup: tabBackup, ci: tabCI, vault: p => vaultSection(p.id, false), settings: tabSettings };
   return `
     <div class="page-head"><h1>${esc(p.name)}</h1>
       ${SEV_LABEL[projSeverity(p.id)] ? `<span class="st ${projSeverity(p.id)}">${SEV_LABEL[projSeverity(p.id)]}</span>` : ''}
@@ -174,13 +179,13 @@ function tabDeploy(p) {
   }).join('');
   return `<div class="page-head" style="margin-top:0"><h2 style="margin:0;display:flex;align-items:center;gap:8px">${I.deploy}Deploy</h2><span class="sub">Git and CI status are checked and shown before running.</span><span class="grow"></span><button class="btn primary" data-action="deploy-new">${I.plus}Add deploy</button></div>
     ${cards ? `<div class="stack">${cards}</div>` : notSet('No deploy defined yet', `<p class="sub">Define a command (e.g. ssh + git pull + restart) to run and log it in one click.</p>`)}
-    ${opSection(p, 'publish')}${opSection(p, 'db')}
+    ${opSection(p, 'publish')}
     ${hist.length ? `<div class="card section" style="margin-top:24px"><h2>Recent history</h2>${hist.map(histRow).join('')}</div>` : ''}`;
 }
 
 /* ---------- Backup ---------- */
 function tabBackup(p) {
-  const cards = p.backups.map(b => {
+  const fileBackups = p.backups.filter(b => b.type !== 'database'), cards = fileBackups.map(b => {
     const r = lastRun(b.id, 'backup'), run = isRunning(b.id), files = (C.backups[b.id] && C.backups[b.id].files) || [];
     return `<div class="card section" ${dndItem('backups', b.id)}>
       <div class="row between"><h2 style="margin:0">${dndGrip}${I.db}${esc(b.name)} ${chip(b.type === 'folder' ? 'Files' : b.type === 'database' ? 'Database' : 'Other', '')}${b.everyHours > 0 ? chip(`Every ${num(b.everyHours)} h`, 'soon', I.clock) : chip('Manual', '')}</h2>
@@ -190,8 +195,8 @@ function tabBackup(p) {
       <div class="sub">${r ? `Last run: ${runChip(r)} ${ago(r.start)}${dur(r)}${r.size ? ' · ' + fmtSize(r.size) : ''}` : 'Never run'}</div>
       ${files.length ? `<details style="margin-top:10px" open><summary>Existing files (${num(files.length)})</summary><div class="files">${files.slice(0, 8).map(f => `<div class="row between"><code>${esc(f.name)}</code><span class="sub">${fmtSize(f.size)} · ${ago(f.ts)}</span></div>`).join('')}</div></details>` : ''}</div>`;
   }).join('');
-  const hist = S.history.filter(h => h.projectId === p.id && h.kind === 'backup').slice(0, 8);
-  return `<div class="page-head" style="margin-top:0"><span class="sub">Scheduled backups only run while the app is open. Be sure to test a restore at least once.</span><span class="grow"></span><button class="btn primary" data-action="backup-new">${I.plus}Add backup</button></div>
+  const hist = S.history.filter(h => h.projectId === p.id && h.kind === 'backup' && !dbBackupIds(p).has(h.refId)).slice(0, 8);
+  return `<div class="page-head" style="margin-top:0"><span class="sub">Scheduled backups only run while the app is open. Database backups are on the Databases tab.</span><span class="grow"></span><button class="btn primary" data-action="backup-new">${I.plus}Add backup</button></div>
     ${cards ? `<div class="stack">${cards}</div>` : notSet('No backup defined yet', `<p class="sub">You can zip a folder or store the output of a command such as mysqldump / pg_dump.</p>`)}
     ${hist.length ? `<div class="card section" style="margin-top:16px"><h2>Backup history</h2>${hist.map(histRow).join('')}</div>` : ''}`;
 }
@@ -291,7 +296,7 @@ function tabCI(p) {
 
 /* ---------- History ---------- */
 function histRow(h) {
-  const p = proj(h.projectId), kind = { deploy: 'Deploy', backup: 'Backup', dbupdate: 'Database update', publish: 'Publish', git: 'Git', run: 'Run', build: 'Build', test: 'Test' }[h.kind] || h.kind;
+  const p = proj(h.projectId), kind = { deploy: 'Deploy', backup: 'Backup', dbupdate: 'Database update', dbrestore: 'Database restore', publish: 'Publish', git: 'Git', run: 'Run', build: 'Build', test: 'Test' }[h.kind] || h.kind;
   return `<div class="trow" data-action="log-open" data-id="${h.id}">${runChip(h)}<span class="tt">${esc(h.title)}</span>
     ${p ? chip(esc(p.name), '') : ''}<span class="sub">${fmtTs(h.start)}${dur(h)}</span></div>`;
 }
@@ -299,7 +304,7 @@ function viewHistory() {
   let list = S.history.filter(h => (!V.hKind || h.kind === V.hKind) && (!V.hProj || h.projectId === V.hProj));
   const sel = (k, opts, val) => `<select data-hf="${k}">${opts.map(([v, l]) => `<option value="${v}" ${String(v) === String(val) ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
   return `<div class="page-head"><h1>Operation history</h1><span class="sub">${num(list.length)} ${list.length === 1 ? 'entry' : 'entries'}</span><span class="grow"></span><button class="btn danger" data-action="hist-clear">Clear</button></div>
-    <div class="filters">${sel('hKind', [['', 'All types'], ['deploy', 'Deploy'], ['backup', 'Backup'], ['dbupdate', 'Database update'], ['publish', 'Publish'], ['git', 'Git'], ['run', 'Run'], ['build', 'Build'], ['test', 'Test']], V.hKind)}
+    <div class="filters">${sel('hKind', [['', 'All types'], ['deploy', 'Deploy'], ['backup', 'Backup'], ['dbupdate', 'Database update'], ['dbrestore', 'Database restore'], ['publish', 'Publish'], ['git', 'Git'], ['run', 'Run'], ['build', 'Build'], ['test', 'Test']], V.hKind)}
     ${sel('hProj', [['', 'All projects'], ...S.projects.map(p => [p.id, p.name])], V.hProj)}</div>
     <div class="card section">${list.length ? list.slice(0, 150).map(histRow).join('') : '<div class="empty">No operations recorded yet</div>'}</div>`;
 }
@@ -546,10 +551,10 @@ async function deployModal(did) {
         <option value="warn" ${gate === 'warn' ? 'selected' : ''}>Warn if the last CI run is not green</option>
         <option value="block" ${gate === 'block' ? 'selected' : ''}>Block the deploy unless the last CI run is green</option>
         <option value="off" ${gate === 'off' ? 'selected' : ''}>Do not look at CI</option></select></div>
-      <div class="field"><label>Pipeline: backup first (if it fails, the deploy does not run)</label><select name="backupId"><option value="">— No backup —</option>${p.backups.map(b => `<option value="${b.id}" ${d.backupId === b.id ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}</select>
+      <div class="field"><label>Pipeline: backup first (if it fails, the deploy does not run)</label><select name="backupId"><option value="">— No backup —</option>${p.backups.map(b => `<option value="${b.id}" ${d.backupId === b.id ? 'selected' : ''}>${esc(dbRefLabel(p, b, true))}</option>`).join('')}</select>
         ${p.backups.length ? '' : '<div class="sub">First define a backup in the "Backup" tab.</div>'}</div>
-      <div class="two"><div class="field"><label>Pipeline: publish first</label><select name="publishId"><option value="">— None —</option>${p.ops.filter(o => o.type === 'publish').map(o => `<option value="${o.id}" ${d.publishId === o.id ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select></div>
-        <div class="field"><label>Pipeline: database update first</label><select name="dbUpdateId"><option value="">— None —</option>${p.ops.filter(o => o.type === 'db').map(o => `<option value="${o.id}" ${d.dbUpdateId === o.id ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select></div></div>
+      <div class="two"><div class="field"><label>Pipeline: publish first</label><select name="publishId"><option value="">— None —</option>${p.ops.filter(o => o.type === 'publish').map(o => `<option value="${o.id}" ${d.publishId === o.id ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select><div class="sub">The output (zip or folder) is passed to the command as <code>%PUBLISH_OUT%</code></div></div>
+        <div class="field"><label>Pipeline: database update first</label><select name="dbUpdateId"><option value="">— None —</option>${p.ops.filter(o => o.type === 'db').map(o => `<option value="${o.id}" ${d.dbUpdateId === o.id ? 'selected' : ''}>${esc(dbRefLabel(p, o, false))}</option>`).join('')}</select></div></div>
       <label class="chk"><input type="checkbox" name="preTest" ${d.preTest ? 'checked' : ''}> Run the project's tests first (Settings → Test); a failing test stops the deploy</label>
       <label class="chk"><input type="checkbox" name="auto" ${d.auto ? 'checked' : ''}> Deploy automatically when CI succeeds on the expected branch (only while this app is open and unlocked)</label>
     </div>${footerBtns(did ? `<button type="button" class="btn danger" data-action="deploy-del" data-id="${did}">${I.trash}Delete</button>` : '')}</form>`);
@@ -560,10 +565,9 @@ function backupModal(bid) {
   openModal(`<form id="backupForm" data-pid="${p.id}" data-id="${bid || ''}">${modalHead(bid ? 'Edit backup' : 'Add backup')}
     <div class="body">
       <div class="two"><div class="field"><label>Name (used in file names)</label><input type="text" name="name" value="${esc(b.name)}" required placeholder="files"></div>
-        <div class="field"><label>Type</label><select name="type"><option value="folder" ${b.type === 'folder' ? 'selected' : ''}>Files</option><option value="database" ${b.type === 'database' ? 'selected' : ''}>Database</option><option value="command" ${b.type === 'command' ? 'selected' : ''}>Other</option></select></div></div>
+        <div class="field"><label>Type</label><select name="type"><option value="folder" ${b.type === 'folder' ? 'selected' : ''}>Files</option><option value="command" ${b.type === 'command' ? 'selected' : ''}>Other</option></select></div></div>
       <div class="bk-folder">${folderField('Source folder', 'source', b.source, '')}
         <div class="field"><label>Exclusions (comma-separated)</label><input type="text" name="exclude" value="${esc(b.exclude)}" dir="ltr"></div></div>
-      <div class="bk-db">${dbBackupField(p.id, b.dbId)}</div>
       <div class="bk-cmd"><div class="field"><label>Backup command</label><textarea name="command" dir="ltr" style="min-height:70px;font-family:Consolas,monospace" placeholder='mysqldump -u root mydb > "%BACKUP_DIR%\\%BACKUP_PREFIX%-%BACKUP_STAMP%.sql"'>${esc(b.command)}</textarea>
         <div class="sub">The output must be named <code>%BACKUP_DIR%\\%BACKUP_PREFIX%-%BACKUP_STAMP%.ext</code> so that retention of old copies works.</div></div>
         <div class="two"><div class="field"><label>Shell</label>${shellSel(b.shell)}</div><div></div></div>
@@ -575,19 +579,11 @@ function backupModal(bid) {
     </div>${footerBtns(bid ? `<button type="button" class="btn danger" data-action="backup-del" data-id="${bid}">${I.trash}Delete</button>` : '')}</form>`);
   syncBackupType();
 }
-/** The database a "Database" backup is taken from (a SQL Server connection string kept in the Vault) */
-function dbBackupField(pid, sel) {
-  const items = C.vault.filter(x => x.kind === 'db' && x.hasSecret && (x.projectId === pid || x.projectId === ''));
-  if (!items.length) return '<div class="check-item warn">' + I.alert + '<span>Add an item of type Database (a SQL Server connection string) to the Vault first.</span></div>';
-  return `<div class="field"><label>Database</label><select name="dbPick">${items.map(x => `<option value="${x.id}" ${sel === x.id ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}</select>
-    <div class="sub">SQL Server only. The backup is taken with sqlcmd using this connection string.</div></div>`;
-}
 function syncBackupType() {
   const f = $('#backupForm');
   if (!f) return;
   const t = f.elements.type.value;
   f.querySelector('.bk-folder').hidden = t !== 'folder';
-  f.querySelector('.bk-db').hidden = t !== 'database';
   f.querySelector('.bk-cmd').hidden = t !== 'command';
 }
 

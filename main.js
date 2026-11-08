@@ -293,6 +293,7 @@ app.whenReady().then(() => {
   h('job:run', spec => jobs.run(spec, m => win && !win.isDestroyed() && win.webContents.send('job:output', m)));
   h('job:kill', jobs.kill);
   h('job:backups', jobs.listBackups);
+  h('db:test', jobs.testDatabase);
 
   h('net:check', net.check);
   h('ci:runs', net.ciRuns);

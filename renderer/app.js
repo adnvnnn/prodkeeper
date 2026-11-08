@@ -176,7 +176,8 @@ async function enterTab() {
   if (t === 'ci' || t === 'tasks' || t === 'git') jobs.push(loadCI(p));
   if (t === 'ci') jobs.push(loadWf(p));
   if (t === 'status') jobs.push(loadHealth(p));
-  if (t === 'backup') p.backups.forEach(b => jobs.push(loadBackups(b)));
+  if (t === 'backup' || t === 'db') p.backups.forEach(b => jobs.push(loadBackups(b)));
+  if (t === 'db') jobs.push(loadVault());
   await Promise.all(jobs);
   softRender();
 }
@@ -231,14 +232,14 @@ function computeAlerts() {
     }
     for (const o of p.ops) {
       const r = lastRun(o.id, o.type === 'db' ? 'dbupdate' : 'publish');
-      if (r && r.status === 'fail') add(p, 'bad', `The last ${o.type === 'db' ? 'database update' : 'publish'} "${iso(o.name)}" failed`, 'deploy');
+      if (r && r.status === 'fail') add(p, 'bad', `The last ${o.type === 'db' ? 'database update' : 'publish'} "${iso(o.name)}" failed`, o.type === 'db' ? 'db' : 'deploy');
     }
     for (const b of p.backups) {
-      const r = lastRun(b.id, 'backup');
+      const r = lastRun(b.id, 'backup'), bt = b.type === 'database' ? 'db' : 'backup';
       const ok = S.history.find(h => h.refId === b.id && h.status === 'ok');
-      if (r && r.status === 'fail') add(p, 'bad', `The last backup "${iso(b.name)}" failed`, 'backup');
-      else if (!ok) add(p, 'warn', `No successful backup of "${iso(b.name)}" yet`, 'backup');
-      else if (Date.now() - ok.start > backupMaxAgeH(b) * 3600e3) add(p, 'warn', `Backup "${iso(b.name)}" is stale (${ago(ok.start)})`, 'backup');
+      if (r && r.status === 'fail') add(p, 'bad', `The last backup "${iso(b.name)}" failed`, bt);
+      else if (!ok) add(p, 'warn', `No successful backup of "${iso(b.name)}" yet`, bt);
+      else if (Date.now() - ok.start > backupMaxAgeH(b) * 3600e3) add(p, 'warn', `Backup "${iso(b.name)}" is stale (${ago(ok.start)})`, bt);
     }
   }
   for (const v of C.vault) {
@@ -395,8 +396,10 @@ async function openWhenReady(p) {
   }
   if (isRunning(p.id)) toast(`${p.name}: ${url} did not respond within 3 minutes`, true);
 }
-function deploySpec(p, d) {
-  return { command: d.command, shell: d.shell, cwd: d.cwd || p.repoPath || '', envSpec: d.envSpec || '', dbId: d.dbId || '' };
+/** pubOut: the zip or folder the "publish first" step produced; the deploy command receives it as PUBLISH_OUT */
+function deploySpec(p, d, pubOut = '') {
+  const envSpec = [d.envSpec, pubOut && `PUBLISH_OUT=${pubOut}`].filter(Boolean).join('\n');
+  return { command: d.command, shell: d.shell, cwd: d.cwd || p.repoPath || '', envSpec, dbId: d.dbId || '' };
 }
 function backupSpec(p, b) {
   return { cwd: b.cwd || p.repoPath || '', envSpec: b.envSpec || '', dbId: b.dbId || '', backup: { name: b.name, type: b.type, source: b.source, destDir: b.destDir, command: b.command, shell: b.shell, exclude: b.exclude, keep: b.keep } };
@@ -430,16 +433,18 @@ async function runPipeline(p, d, { auto } = {}) {
     if (!b || b.status !== 'ok') return toast(`Deploy "${d.name}" stopped: the backup "${bk.name}" ${b ? 'failed' : 'could not start'}`, true);
   }
   const pub = d.publishId && p.ops.find(x => x.id === d.publishId && x.type === 'publish');
+  let pubOut = '';
   if (pub) {
     const r = await runOp(p, pub, { silent: auto, auto });
     if (!r || r.status !== 'ok') return toast(`Deploy "${d.name}" stopped: publishing "${pub.name}" ${r ? 'failed' : 'could not start'}`, true);
+    pubOut = r.file || '';
   }
   const dbu = d.dbUpdateId && p.ops.find(x => x.id === d.dbUpdateId && x.type === 'db');
   if (dbu) {
     const r = await runDbUpdate(p, dbu, !bk, { silent: auto, auto }); // the deploy's own backup, when there is one, already covers the update
     if (!r || r.status !== 'ok') return toast(`Deploy "${d.name}" stopped: the database update "${dbu.name}" ${r ? 'failed' : 'did not run'}`, true);
   }
-  return runJob({ pid: p.id, kind: 'deploy', refId: d.id, title: `Deploy: ${d.name}${auto ? ' (after CI)' : ''}`, spec: deploySpec(p, d), silent: auto, auto });
+  return runJob({ pid: p.id, kind: 'deploy', refId: d.id, title: `Deploy: ${d.name}${auto ? ' (after CI)' : ''}`, spec: deploySpec(p, d, pubOut), silent: auto, auto });
 }
 
 /** Pre-deploy checks: branch, uncommitted changes, unpushed commits, CI status */
@@ -579,7 +584,6 @@ function saveBackup(form) {
     shell: fd.get('shell'), cwd: String(fd.get('cwd')).trim(), exclude: String(fd.get('exclude')).trim(),
     keep: Math.max(0, Math.round(Number(fd.get('keep')) || 0)), everyHours: Math.max(0, Number(fd.get('everyHours')) || 0), envSpec: String(fd.get('envSpec') ?? '').trim(), dbId: String(fd.get('dbId') || ''),
   };
-  if (data.type === 'database') { data.dbId = String(fd.get('dbPick') || ''); data.envSpec = ''; if (!data.dbId) return toast('Choose a database', true); }
   if (data.type === 'folder') { data.dbId = ''; data.envSpec = ''; } // a zip backup never uses a database
   if (data.type === 'folder' && !data.source) return toast('Set the source folder', true);
   if (data.type === 'command' && !data.command) return toast('Enter the backup command', true);
@@ -695,7 +699,26 @@ const actions = {
     const p = proj(V.pid); p.deploys = p.deploys.filter(x => x.id !== el.dataset.id);
     save(); closeModal(); render();
   },
-  tpl: el => { document.querySelector('#deployForm [name=command]').value = TEMPLATES[el.dataset.i].cmd; },
+  tpl: el => {
+    const t = TEMPLATES[el.dataset.i], env = document.querySelector('#deployForm [name=envSpec]');
+    document.querySelector('#deployForm [name=command]').value = t.cmd;
+    if (t.pub) {
+      // one step: make sure a folder publish exists and run it first
+      const p = proj(V.pid), sel = document.querySelector('#deployForm [name=publishId]');
+      let op = p.ops.find(o => o.type === 'publish' && !o.zip);
+      if (!op) {
+        const base = (p.repoPath || '').replace(/[\\/]+$/, '');
+        op = { id: uid(), type: 'publish', name: 'Web publish', command: 'dotnet publish -c Release -o "%PUBLISH_DIR%"', shell: 'cmd', cwd: '', envSpec: '', dbId: '', destDir: base ? base + '-publish' : '', zip: false, versioned: false, keep: 5, openAfter: false };
+        p.ops.push(op); save();
+        sel.insertAdjacentHTML('beforeend', `<option value="${op.id}">${esc(op.name)}</option>`);
+        if (!op.destDir) toast('Set the destination folder of "Web publish" in Publish to folder', true);
+      }
+      sel.value = op.id;
+    }
+    if (!t.env) return;
+    if (env && !env.value.includes('WD_PASS=')) env.value = (env.value ? env.value + '\n' : '') + t.env;
+    else if (!env) toast(`Add the environment variable ${t.env} (password from the Vault) to this deploy`);
+  },
 
   /* Backup */
   'backup-new': () => backupModal(),

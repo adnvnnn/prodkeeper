@@ -7,8 +7,9 @@ Built with Electron and vanilla JS (no UI framework, no build step).
 ## Features
 
 - **Git** – status, fetch / pull / push, branches, tags, recent commits.
-- **Deploy** – your own commands with a pre-flight checklist, live output and a post-deploy health check; the same tab also holds *Publish to folder* (saved as a zip or a folder, optionally versioned) and *Database update* (with an optional backup first).
+- **Deploy** – your own commands with a pre-flight checklist, live output and a post-deploy health check; the same tab also holds *Publish to folder* (saved as a zip or a folder, optionally versioned).
 - **Live status** – HTTP checks with status code, latency, SSL expiry and uptime.
+- **Databases** – define a SQL Server database once (connection kept encrypted in the vault) and manage it from one card: test connection, back up now or on a schedule with retention, run the update / migration command (with a backup first), and restore from any backup file.
 - **Backups** – zip a folder or run any command, with retention and optional schedule.
 - **CI/CD** – GitHub Actions runs: view, re-run, cancel, dispatch; create the CI workflow file from the project's Build / Test settings; each deploy is shown as a pipeline (tests → CI → deploy → site check), can require a green CI run, run the project tests first, and deploy automatically when CI succeeds.
 - **Agile board** – per-project kanban (Backlog → To do → In progress → Done) with drag and drop, a WIP limit shared by all projects (3 tasks in progress in total by default; tasks waiting on CI or a review can be marked Blocked and are not counted), a warning when more than one sprint runs at once, story-point estimates, optional sprints with a closing retrospective, and tasks linked to git branches (a task closes itself when its branch is merged).

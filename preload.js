@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('api', {
     status: inv('vault:status'), list: inv('vault:list'), save: inv('vault:save'), remove: inv('vault:remove'),
     removeByProject: inv('vault:removeByProject'), reveal: inv('vault:reveal'), copy: inv('vault:copy'),
   },
+  db: { test: inv('db:test') },
   job: {
     run: inv('job:run'), kill: inv('job:kill'), backups: inv('job:backups'),
     onOutput: cb => ipcRenderer.on('job:output', (_e, m) => cb(m)),
